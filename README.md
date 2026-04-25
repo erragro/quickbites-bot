@@ -1,35 +1,44 @@
 # QuickBites Support Bot
 
-A GenAI-powered customer support bot for the QuickBites food-delivery take-home
-(`/Users/apple/Documents/techjays/quickbites-candidate-starter`). Talks to the
-hosted simulator, decides refund / complaint / escalate / flag-abuse / close
-actions per turn, and is auto-graded on the 22-scenario prod eval set.
+A GenAI customer-support bot for the QuickBites food-delivery take-home.
+Talks to the hosted simulator, decides refund / complaint / escalate /
+flag-abuse / close actions per turn, auto-graded on a 22-scenario prod set.
 
-Architecture: Cardinal-inspired **5-phase synchronous pipeline** (Validator →
-Deduplicator → Handler → Enricher → Dispatcher) followed by a **4-stage LLM
-pipeline** (Classify → Evaluate → Validate → Respond), all inside a single
-FastAPI handler. Design notes in [`docs/DESIGN.md`](docs/DESIGN.md).
+**Live service:** https://quickbites-bot-162392320588.asia-south1.run.app
+**Final graded score:** **1960 / 2200 = 89.1%** (14 perfect scenarios). See
+[`docs/DESIGN.md`](docs/DESIGN.md) for architecture, per-scenario
+post-mortem, and the 7 follow-on fixes shipped after the run.
 
-## One-command local run
+Architecture: Cardinal-inspired **5-phase synchronous pipeline** (Validator
+→ Deduplicator → Handler → Enricher → Dispatcher) followed by a **4-stage
+LLM pipeline** (Classify → Evaluate → Validate → Respond), all inside a
+single FastAPI handler.
+
+## Quick start (against the live service)
+
+No setup required — the service is deployed and accepts requests.
 
 ```bash
-cp .env.example .env     # fill ANTHROPIC_API_KEY, SIMULATOR_BASE_URL, CANDIDATE_TOKEN
-docker compose up --build
+URL=https://quickbites-bot-162392320588.asia-south1.run.app
+
+# liveness
+curl -sf "$URL/healthz"
+
+# run a rehearsal scenario end-to-end against the simulator
+curl -s -X POST "$URL/run/dev" \
+     -H 'content-type: application/json' \
+     -d '{"scenario_id": 101}' | jq .
+
+# inspect a persisted session transcript with per-turn stage trace
+curl -s "$URL/sessions/<session_id>" | jq .
+
+# locked prod score (read-only — quota is consumed)
+curl -s "$URL/score" | jq .
 ```
 
-Then:
-
-```bash
-# run a dev rehearsal scenario
-curl -X POST http://localhost:8000/run/dev -H 'content-type: application/json' \
-    -d '{"scenario_id": 101}' | jq .
-
-# run all prod graded scenarios (stops at 409)
-curl -X POST http://localhost:8000/run/prod | jq .
-
-# final score
-curl http://localhost:8000/score | jq .
-```
+`POST /run/prod` will return `sessions_run: 0` against the live URL — the
+simulator's 22-scenario prod quota was consumed during the original eval.
+`/run/dev` (rehearsal scenarios 101–105) is still freely runnable.
 
 ## Endpoints
 
@@ -43,14 +52,62 @@ curl http://localhost:8000/score | jq .
 | `GET`  | `/sessions/{id}` | full transcript + per-turn stage trace |
 | `GET`  | `/score` | proxy to simulator `/v1/candidate/summary` |
 
+## Local development
+
+For iteration on the policy / matrix / Stage 2 logic.
+
+```bash
+cp .env.example .env     # fill ANTHROPIC_API_KEY, SIMULATOR_BASE_URL, CANDIDATE_TOKEN
+docker compose up --build
+```
+
+```bash
+curl -X POST http://localhost:8000/run/dev \
+     -H 'content-type: application/json' \
+     -d '{"scenario_id": 101}' | jq .
+```
+
+Local stack uses Postgres in a separate container (via `docker-compose.yml`);
+the Cloud Run image bundles Postgres into the same container (see
+[`Dockerfile.cloudrun`](Dockerfile.cloudrun) and
+[`cloudrun-entrypoint.sh`](cloudrun-entrypoint.sh)).
+
+## Cloud Run deployment
+
+Image is built by Cloud Build (avoids local-network registry pushes) and
+deployed to `asia-south1` (same region as the simulator).
+
+```bash
+# rebuild + push to Artifact Registry
+gcloud builds submit \
+  --config=cloudbuild.yaml \
+  --substitutions=_TAG=v2 \
+  --project=project-2d37241a-3276-4c0d-b31 \
+  --region=asia-south1
+
+# redeploy
+gcloud run deploy quickbites-bot \
+  --image=asia-south1-docker.pkg.dev/project-2d37241a-3276-4c0d-b31/quickbites/bot:v2 \
+  --region=asia-south1 \
+  --platform=managed \
+  --allow-unauthenticated \
+  --port=8080 --memory=1Gi --cpu=1 \
+  --no-cpu-throttling --max-instances=1 --timeout=3600
+```
+
+Required runtime env vars (set via `--set-env-vars` on `gcloud run deploy`):
+`LLM_PROVIDER`, `ANTHROPIC_API_KEY`, `ANTHROPIC_FAST_MODEL`,
+`ANTHROPIC_MODEL`, `SIMULATOR_BASE_URL`, `CANDIDATE_TOKEN`.
+
 ## Tests
 
 ```bash
 .venv/bin/pytest
 ```
 
-Offline tests (no Postgres, no Anthropic) cover `abuse_rules`, `stage2_validator`
-hard rules, and `phase1_validator` prompt-injection detection.
+60 offline tests covering `abuse_rules`, `refund_matrix`, `stage2_validator`
+hard rules, and `phase1_validator` injection detection. Tests run without
+Postgres or any LLM credentials.
 
 ## Layout
 
@@ -65,37 +122,37 @@ app/
 ├── migrations/bootstrap.py   sqlite3 → Postgres copy on startup
 ├── l1_cardinal/              Phase 1–5 orchestrator
 │   ├── pipeline.py
-│   ├── phase1_validator.py   schema + injection scan
-│   ├── phase2_deduplicator.py in-proc SHA-256 cache, 10-min TTL
-│   ├── phase3_handler.py     session state + history rehydrate
-│   ├── phase4_enricher.py    Postgres pre-fetch of order/customer/rider/restaurant
-│   └── phase5_dispatcher.py  escalation_group + execution_id
+│   ├── phase1_validator.py     schema + injection scan
+│   ├── phase2_deduplicator.py  in-proc SHA-256 cache, 10-min TTL
+│   ├── phase3_handler.py       session state + history rehydrate
+│   ├── phase4_enricher.py      Postgres pre-fetch
+│   └── phase5_dispatcher.py    escalation_group + execution_id
 ├── l2_agents/                4-stage LLM pipeline
-│   ├── stage0_classifier.py  Haiku: intent, order_id, sentiment, injection
-│   ├── stage1_evaluator.py   Sonnet + tool-use
-│   ├── stage2_validator.py   deterministic hard rules (no LLM)
-│   ├── stage3_responder.py   Sonnet: prose + final actions JSON
-│   ├── tools.py              7 repository-backed tools
-│   └── anthropic_client.py
+│   ├── stage0_classifier.py    Haiku: intent, order_id, sentiment, injection
+│   ├── stage1_evaluator.py     Sonnet: structured action proposal
+│   ├── stage2_validator.py     deterministic hard rules (no LLM)
+│   ├── stage3_responder.py     Sonnet: prose + final actions JSON
+│   ├── tools.py
+│   └── llm_provider.py         Anthropic / Gemini Gateway abstraction
 ├── policies/
-│   ├── policy_loader.py      caches policy_and_faq.md
-│   └── abuse_rules.py        pure functions
+│   ├── policy_loader.py        caches policy_and_faq.md
+│   ├── abuse_rules.py          pure functions
+│   ├── refund_matrix.py        deterministic refund table
+│   └── compensation_caps.py    tier-aware caps
 └── runners/
-    ├── session_runner.py     1 session end-to-end
+    ├── session_runner.py       1 session end-to-end
     ├── dev_runner.py
     └── prod_runner.py
 data/app.db                   bundled seed, migrated into Postgres on boot
 policy_and_faq.md             bundled, loaded into Stage 1 system prompt
+Dockerfile                    local dev (separate Postgres container)
+Dockerfile.cloudrun           Cloud Run (bundled Postgres on tmpfs)
+cloudbuild.yaml               Cloud Build pipeline
 ```
 
 ## Env vars
 
-See `.env.example`. Required: `ANTHROPIC_API_KEY`, `SIMULATOR_BASE_URL`,
-`CANDIDATE_TOKEN`. Optional tuning: `refund_soft_cap_inr` (default 1500),
-`confidence_floor` (default 0.6), `dedup_ttl_seconds` (default 600).
-
-## Deploying on Railway
-
-The repo includes `Dockerfile` and `railway.toml`. Provision a Postgres addon,
-wire `DATABASE_URL`, set the three secrets above, deploy. `bootstrap.run()`
-runs on startup and is idempotent — subsequent deploys skip the copy.
+See [`.env.example`](.env.example). Required: `ANTHROPIC_API_KEY`,
+`SIMULATOR_BASE_URL`, `CANDIDATE_TOKEN`. Optional tuning:
+`refund_soft_cap_inr` (default 1500), `confidence_floor` (default 0.6),
+`dedup_ttl_seconds` (default 600).
