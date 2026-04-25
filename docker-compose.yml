@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: quickbites
+      POSTGRES_PASSWORD: quickbites
+      POSTGRES_DB: quickbites
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quickbites"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://quickbites:quickbites@postgres:5432/quickbites
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini_gateway}
+      GEMINI_GATEWAY_URL: ${GEMINI_GATEWAY_URL:-https://gemini-gateway-162392320588.asia-south1.run.app}
+      GEMINI_GATEWAY_SECRET: ${GEMINI_GATEWAY_SECRET}
+      GEMINI_FAST_MODEL: ${GEMINI_FAST_MODEL:-gemini-2.5-flash-lite}
+      GEMINI_SMART_MODEL: ${GEMINI_SMART_MODEL:-gemini-2.5-flash}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      ANTHROPIC_FAST_MODEL: ${ANTHROPIC_FAST_MODEL:-claude-haiku-4-5}
+      SIMULATOR_BASE_URL: ${SIMULATOR_BASE_URL}
+      CANDIDATE_TOKEN: ${CANDIDATE_TOKEN}
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata:
