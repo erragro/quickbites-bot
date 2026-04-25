@@ -1,0 +1,19 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - Dockerfile.cloudrun
+      - -t
+      - asia-south1-docker.pkg.dev/$PROJECT_ID/quickbites/bot:$_TAG
+      - .
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - asia-south1-docker.pkg.dev/$PROJECT_ID/quickbites/bot:$_TAG
+images:
+  - asia-south1-docker.pkg.dev/$PROJECT_ID/quickbites/bot:$_TAG
+substitutions:
+  _TAG: v1
+options:
+  logging: CLOUD_LOGGING_ONLY

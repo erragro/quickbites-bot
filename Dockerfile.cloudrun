@@ -1,0 +1,31 @@
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    DEBIAN_FRONTEND=noninteractive
+
+# Bundle Postgres so a single Cloud Run container can serve the app
+# without an external DB. Data lives on /tmp (tmpfs) and is rebuilt
+# from app.db on every cold start.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        postgresql \
+        postgresql-contrib \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY pyproject.toml ./
+RUN pip install --upgrade pip && pip install .
+
+COPY app ./app
+COPY data ./data
+COPY policy_and_faq.md ./policy_and_faq.md
+COPY cloudrun-entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
+
+ENV PORT=8080
+EXPOSE 8080
+
+CMD ["./entrypoint.sh"]
