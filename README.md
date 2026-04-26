@@ -52,13 +52,15 @@ simulator's 22-scenario prod quota was consumed during the original eval.
 | `GET`  | `/sessions/{id}` | full transcript + per-turn stage trace |
 | `GET`  | `/score` | proxy to simulator `/v1/candidate/summary` |
 
-## Postman collection
+## Testing the bot (Postman)
 
 A demo-ready Postman collection ships at
-[`postman/QuickBites.postman_collection.json`](postman/QuickBites.postman_collection.json).
+[`postman/QuickBites.postman_collection.json`](postman/QuickBites.postman_collection.json),
+and a step-by-step reviewer walkthrough lives in
+[`docs/TESTING_GUIDE.md`](docs/TESTING_GUIDE.md).
 
-Import it into Postman, leave `baseUrl` on its default (the live Cloud Run
-URL), and run the requests in order:
+**Quick version:** install Postman, import the collection, and run the
+requests in order:
 
 1. **Health & score** — confirm the service is up, see the locked
    `1960/2200 = 89.1%` from the prod simulator.
@@ -71,8 +73,11 @@ URL), and run the requests in order:
    demo run; the collection auto-captures `sessionId` from each `/run/dev`
    response.
 
-Flip `baseUrl` to `http://localhost:8000` to demo against the local
-docker-compose stack instead.
+The collection ships with `baseUrl` already pointing at the Cloud Run
+service. Flip it to `http://localhost:8000` to demo against the local
+docker-compose stack instead. See
+[`docs/TESTING_GUIDE.md`](docs/TESTING_GUIDE.md) for what to expect from
+each response and how to read the override traces.
 
 ## Local development
 
