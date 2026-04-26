@@ -52,6 +52,28 @@ simulator's 22-scenario prod quota was consumed during the original eval.
 | `GET`  | `/sessions/{id}` | full transcript + per-turn stage trace |
 | `GET`  | `/score` | proxy to simulator `/v1/candidate/summary` |
 
+## Postman collection
+
+A demo-ready Postman collection ships at
+[`postman/QuickBites.postman_collection.json`](postman/QuickBites.postman_collection.json).
+
+Import it into Postman, leave `baseUrl` on its default (the live Cloud Run
+URL), and run the requests in order:
+
+1. **Health & score** — confirm the service is up, see the locked
+   `1960/2200 = 89.1%` from the prod simulator.
+2. **Demo — good path** — Sc 101 (cold food, clean customer): refund +
+   restaurant complaint via the matrix.
+3. **Demo — adversarial** — Sc 104 (injection → pivot, abuser): silent
+   refusal with abuse flag; Sc 103 (abuser soft claim): token credit +
+   escalate + flag.
+4. **Inspect** — drill into the persisted transcript for the most recent
+   demo run; the collection auto-captures `sessionId` from each `/run/dev`
+   response.
+
+Flip `baseUrl` to `http://localhost:8000` to demo against the local
+docker-compose stack instead.
+
 ## Local development
 
 For iteration on the policy / matrix / Stage 2 logic.
