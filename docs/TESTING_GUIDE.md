@@ -56,7 +56,7 @@ If you ever need to test against your own local instance, change this to
 Cloud Run cold-starts the container in ~10 seconds while the bundled
 Postgres boots. Do this once and the rest of the demo runs warm.
 
-1. Open `1. Health & score → GET /healthz`.
+1. Open `1. Health & score → GET /ping`.
 2. Click **Send**.
 
 **Expected response (HTTP 200):**

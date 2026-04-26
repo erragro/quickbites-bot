@@ -37,8 +37,18 @@ def _startup() -> None:
         logger.exception("bootstrap failed — service will serve /healthz but runs will error")
 
 
+@app.get("/ping")
+def ping() -> dict:
+    """Liveness endpoint. NOT named /healthz — Google Cloud Run's frontend
+    silently intercepts /healthz, /health, /livez and returns its own 404
+    before the request reaches the container."""
+    return {"status": "ok"}
+
+
 @app.get("/healthz")
 def healthz() -> dict:
+    """Backwards-compat alias kept for local docker-compose runs. On Cloud Run
+    this route is shadowed by Google's frontend (see /ping)."""
     return {"status": "ok"}
 
 

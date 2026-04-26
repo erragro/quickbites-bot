@@ -22,7 +22,7 @@ No setup required — the service is deployed and accepts requests.
 URL=https://quickbites-bot-162392320588.asia-south1.run.app
 
 # liveness
-curl -sf "$URL/healthz"
+curl -sf "$URL/ping"
 
 # run a rehearsal scenario end-to-end against the simulator
 curl -s -X POST "$URL/run/dev" \
@@ -44,7 +44,7 @@ simulator's 22-scenario prod quota was consumed during the original eval.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET`  | `/healthz` | liveness |
+| `GET`  | `/ping` | liveness (Cloud Run frontend reserves `/healthz`) |
 | `POST` | `/run/dev` | run one rehearsal scenario (body: `{scenario_id?: 101-105}`) |
 | `POST` | `/run/dev/all` | run all rehearsal scenarios 101-105 |
 | `POST` | `/run/prod` | iterate prod sessions until simulator returns 409 |

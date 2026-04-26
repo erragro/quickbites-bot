@@ -6,7 +6,7 @@
   (Cloud Run, region `asia-south1`, single instance, bundled Postgres on
   tmpfs, ~10s cold start, max 1 instance, 60-min request timeout).
 - **Source:** https://github.com/erragro/quickbites-bot
-- **Endpoints:** `GET /healthz`, `POST /run/dev` (rehearsal 101–105),
+- **Endpoints:** `GET /ping`, `POST /run/dev` (rehearsal 101–105),
   `POST /run/prod`, `GET /sessions/{id}`, `GET /score`.
 
 ## 1. Architecture

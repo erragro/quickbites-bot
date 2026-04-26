@@ -21,16 +21,16 @@
       "name": "1. Health & score",
       "item": [
         {
-          "name": "GET /healthz",
+          "name": "GET /ping",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/healthz",
+              "raw": "{{baseUrl}}/ping",
               "host": ["{{baseUrl}}"],
-              "path": ["healthz"]
+              "path": ["ping"]
             },
-            "description": "Liveness probe. Cloud Run cold-starts in ~10s while the bundled Postgres boots; subsequent calls are warm."
+            "description": "Liveness probe. Cloud Run cold-starts in ~10s while the bundled Postgres boots; subsequent calls are warm.\n\n(Note: deliberately NOT /healthz — Google Cloud Run's frontend intercepts /healthz, /health, /livez and returns its own 404 before requests reach the container.)"
           },
           "response": []
         },
