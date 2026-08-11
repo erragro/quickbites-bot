@@ -22,10 +22,12 @@ from typing import Optional
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
     Integer,
+    PrimaryKeyConstraint,
     String,
     Text,
     UniqueConstraint,
@@ -54,6 +56,12 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Super-admin bypasses per-module ACL and can manage users + module
+    # registrations. Kept separate from `user_module_access` so bootstrap
+    # doesn't need a self-referential grant (chicken-and-egg on first user).
+    is_super_admin: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
     )
@@ -66,6 +74,84 @@ class User(Base):
 
     sessions: Mapped[list["ChatSession"]] = relationship(
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True,
+    )
+    # `foreign_keys` disambiguates the two FKs from user_module_access →
+    # users (owner via user_id, and audit trail via granted_by).
+    module_accesses: Mapped[list["UserModuleAccess"]] = relationship(
+        back_populates="user",
+        foreign_keys="UserModuleAccess.user_id",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Module registry — one row per feature module the platform exposes.
+# ---------------------------------------------------------------------------
+
+
+class Module(Base):
+    __tablename__ = "modules"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    key: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    icon: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    path: Mapped[str] = mapped_column(String(100), nullable=False)
+    is_system: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False,
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+    accesses: Mapped[list["UserModuleAccess"]] = relationship(
+        back_populates="module",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class UserModuleAccess(Base):
+    __tablename__ = "user_module_access"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    module_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("modules.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    access_level: Mapped[str] = mapped_column(String(20), nullable=False)
+    granted_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+    user: Mapped["User"] = relationship(
+        back_populates="module_accesses",
+        foreign_keys=[user_id],
+    )
+    module: Mapped["Module"] = relationship(back_populates="accesses")
+
+    __table_args__ = (
+        PrimaryKeyConstraint("user_id", "module_id", name="pk_user_module_access"),
+        CheckConstraint(
+            "access_level IN ('view','edit','admin')",
+            name="ck_user_module_access_level",
+        ),
+        Index("ix_user_module_access_module", "module_id"),
     )
 
 

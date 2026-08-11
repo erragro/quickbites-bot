@@ -71,4 +71,5 @@ class UserOut(BaseModel):
     id: uuid.UUID
     email: str
     is_active: bool
+    is_super_admin: bool = False
     created_at: datetime

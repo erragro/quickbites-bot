@@ -30,6 +30,10 @@ from app.auth.password import hash_password, verify_password
 from app.auth.schemas import LoginRequest, SignupRequest, TokenResponse, UserOut
 from app.config import settings
 from app.models import User
+from app.modules.service import (
+    apply_default_module_access,
+    maybe_promote_super_admin,
+)
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -65,6 +69,11 @@ def signup(
             status_code=status.HTTP_409_CONFLICT,
             detail="unable to create account with this email",
         )
+
+    # Bootstrap: promote to super_admin if configured, and hand out the
+    # default module access so the demo works out of the box.
+    maybe_promote_super_admin(db, user)
+    apply_default_module_access(db, user)
 
     token = create_access_token(user.id)
     return TokenResponse(

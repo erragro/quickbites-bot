@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "motion/react"
 import { MessageSquarePlus, MoreHorizontal, Pencil, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
+// Button is used elsewhere (dialog footer), keep the import.
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -154,32 +155,32 @@ function SidebarRow({
         </Link>
         <DropdownMenu>
           <DropdownMenuTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-7 opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100"
-                aria-label="Chat options"
-              >
-                <MoreHorizontal className="size-4" />
-              </Button>
-            }
-          />
+            className="ml-auto inline-flex size-7 items-center justify-center rounded-md opacity-0 outline-none transition-opacity hover:bg-sidebar-accent group-hover:opacity-100 data-[popup-open]:opacity-100"
+            aria-label="Chat options"
+            onClick={(e) => e.preventDefault()}
+          >
+            <MoreHorizontal className="size-4" />
+          </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-40">
+            {/*
+              onSelect closes the menu by default in Base UI (do NOT
+              preventDefault — that keeps the menu open and traps focus,
+              which is what blocked the rename dialog from opening).
+              We schedule the dialog open in a microtask so React commits
+              the menu-close first and Base UI doesn't fight it for focus.
+            */}
             <DropdownMenuItem
-              onSelect={(e) => {
-                e.preventDefault()
+              onSelect={() => {
                 setDraftTitle(session.title ?? "")
-                setRenameOpen(true)
+                queueMicrotask(() => setRenameOpen(true))
               }}
             >
               <Pencil className="size-4" />
               Rename
             </DropdownMenuItem>
             <DropdownMenuItem
-              onSelect={(e) => {
-                e.preventDefault()
-                setDeleteOpen(true)
+              onSelect={() => {
+                queueMicrotask(() => setDeleteOpen(true))
               }}
               className="text-destructive focus:text-destructive"
             >

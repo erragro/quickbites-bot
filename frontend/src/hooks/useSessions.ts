@@ -5,6 +5,7 @@ import type {
   ChatMessageResponse,
   SessionDetail,
   SessionSummary,
+  Turn,
 } from "@/types"
 
 // Central query-key factory so invalidations stay consistent across hooks.
@@ -100,19 +101,52 @@ interface SendArgs {
   message: string
 }
 
+interface SendContext {
+  previous: SessionDetail | undefined
+}
+
 export function useSendMessage() {
   const qc = useQueryClient()
-  return useMutation({
-    mutationFn: async ({ sessionId, message }: SendArgs): Promise<ChatMessageResponse> => {
+  return useMutation<ChatMessageResponse, unknown, SendArgs, SendContext>({
+    mutationFn: async ({ sessionId, message }) => {
       const { data } = await api.post<ChatMessageResponse>(
         `/api/sessions/${sessionId}/chat`,
         { message },
       )
       return data
     },
-    onSuccess: (_res, { sessionId }) => {
-      // Server-side is authoritative for the transcript; refetch to get
-      // both the customer + bot turns with correct turn_no ordering.
+    // Optimistic update: append the user's message to the transcript
+    // BEFORE the bot responds so the UI feels alive. If the request
+    // fails we roll back (see onError). onSettled always refetches the
+    // server truth so ordering + turn_no stay authoritative.
+    onMutate: async ({ sessionId, message }) => {
+      await qc.cancelQueries({ queryKey: sessionKeys.detail(sessionId) })
+      const previous = qc.getQueryData<SessionDetail>(sessionKeys.detail(sessionId))
+
+      if (previous) {
+        const lastTurnNo = previous.turns.length
+          ? previous.turns[previous.turns.length - 1].turn_no
+          : 0
+        const optimisticTurn: Turn = {
+          turn_no: lastTurnNo + 1,
+          role: "customer",
+          message,
+          actions: null,
+          created_at: new Date().toISOString(),
+        }
+        qc.setQueryData<SessionDetail>(sessionKeys.detail(sessionId), {
+          ...previous,
+          turns: [...previous.turns, optimisticTurn],
+        })
+      }
+      return { previous }
+    },
+    onError: (_err, { sessionId }, ctx) => {
+      if (ctx?.previous) {
+        qc.setQueryData(sessionKeys.detail(sessionId), ctx.previous)
+      }
+    },
+    onSettled: (_res, _err, { sessionId }) => {
       qc.invalidateQueries({ queryKey: sessionKeys.detail(sessionId) })
       qc.invalidateQueries({ queryKey: sessionKeys.list() })
     },

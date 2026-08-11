@@ -5,7 +5,40 @@ export interface User {
   id: string
   email: string
   is_active: boolean
+  is_super_admin?: boolean
   created_at: string
+}
+
+export type AccessLevel = "view" | "edit" | "admin"
+
+export interface ModuleInfo {
+  id: string
+  key: string
+  name: string
+  description: string | null
+  icon: string | null
+  path: string
+  is_system: boolean
+  sort_order: number
+  access_level: AccessLevel | null
+}
+
+export interface UserModuleAccessDTO {
+  module_id: string
+  module_key: string
+  module_name: string
+  access_level: AccessLevel
+  granted_at: string
+  granted_by: string | null
+}
+
+export interface AdminUser {
+  id: string
+  email: string
+  is_active: boolean
+  is_super_admin: boolean
+  created_at: string
+  module_accesses: UserModuleAccessDTO[]
 }
 
 export interface AuthToken {

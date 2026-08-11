@@ -7,6 +7,7 @@ import { LoaderCircleIcon } from "@/components/animate-ui/icons/loader-circle"
 import { ShimmeringText } from "@/components/animate-ui/primitives/texts/shimmering"
 import { MessageBubble } from "@/components/MessageBubble"
 import { MessageInput } from "@/components/MessageInput"
+import { SessionSidebar } from "@/components/SessionSidebar"
 import { humaniseError } from "@/lib/api"
 import {
   useCreateSession,
@@ -16,7 +17,10 @@ import {
 } from "@/hooks/useSessions"
 
 /**
- * Chat surface. Two modes:
+ * Chat surface. Runs inside the AppShell (which owns the main app
+ * sidebar), and adds its OWN inner sidebar for the session list.
+ *
+ * Two modes:
  *  - No sessionId in the URL → empty state; either shows a "start a new
  *    chat" prompt (if the user has no sessions yet) or auto-redirects to
  *    their most recent chat.
@@ -47,96 +51,115 @@ export function ChatPage() {
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [detail.data?.turns.length, send.isPending])
 
-  // ------------- Empty state (no session in the URL) -------------
-  if (!sessionId) {
-    return <EmptyState onStart={async (m) => {
-      try {
-        const created = await createSession.mutateAsync({})
-        nav(`/chat/${created.session_id}`, { replace: true })
-        // ...then send the first message
-        await send.mutateAsync({ sessionId: created.session_id, message: m })
-      } catch (err) {
-        toast.error(humaniseError(err, "Could not start chat"))
-      }
-    }} disabled={createSession.isPending} />
-  }
-
-  // ------------- Session mode -------------
-  if (detail.isLoading) {
-    return (
-      <div className="grid h-full place-items-center">
-        <LoaderCircleIcon size={28} animate animation="default" className="text-muted-foreground" />
-      </div>
-    )
-  }
-
-  if (detail.isError) {
-    return (
-      <div className="grid h-full place-items-center px-4 text-center">
-        <div className="space-y-3">
-          <p className="text-lg font-medium">Chat not found</p>
-          <p className="text-sm text-muted-foreground">
-            The chat you're looking for was deleted or doesn't belong to your account.
-          </p>
-        </div>
-      </div>
-    )
-  }
-
-  const turns = detail.data?.turns ?? []
-
   return (
-    <div className="flex h-full flex-col">
-      <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto py-6">
-        {turns.length === 0 && (
-          <div className="grid h-full place-items-center px-6 text-center">
-            <div className="space-y-2">
-              <p className="text-lg font-medium">Start the conversation</p>
-              <p className="text-sm text-muted-foreground">
-                Ask a question about a recent order, refund, or delivery. The
-                bot supports English, Hindi, and other Indian languages.
-              </p>
-            </div>
-          </div>
-        )}
-
-        <AnimatePresence initial={false}>
-          {turns.map((t) => (
-            <MessageBubble
-              key={`${t.turn_no}-${t.role}-${t.created_at}`}
-              role={t.role}
-              message={t.message ?? ""}
-              actions={t.actions}
-            />
-          ))}
-        </AnimatePresence>
-
-        {send.isPending && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex justify-start px-4"
-          >
-            <div className="rounded-2xl rounded-bl-sm bg-muted px-4 py-2.5 text-sm text-muted-foreground">
-              <ShimmeringText text="Thinking…" />
-            </div>
-          </motion.div>
-        )}
+    <div className="flex h-full w-full min-w-0">
+      <SessionSidebar />
+      <div className="flex min-w-0 flex-1 flex-col">
+        {renderBody()}
       </div>
-
-      <MessageInput
-        disabled={send.isPending}
-        isSending={send.isPending}
-        onSend={async (message) => {
-          try {
-            await send.mutateAsync({ sessionId, message })
-          } catch (err) {
-            toast.error(humaniseError(err, "Message failed to send"))
-          }
-        }}
-      />
     </div>
   )
+
+  function renderBody() {
+    // ----- Empty state -----
+    if (!sessionId) {
+      return (
+        <EmptyState
+          disabled={createSession.isPending}
+          onStart={async (m) => {
+            try {
+              const created = await createSession.mutateAsync({})
+              nav(`/chat/${created.session_id}`, { replace: true })
+              await send.mutateAsync({ sessionId: created.session_id, message: m })
+            } catch (err) {
+              toast.error(humaniseError(err, "Could not start chat"))
+            }
+          }}
+        />
+      )
+    }
+
+    if (detail.isLoading) {
+      return (
+        <div className="grid h-full place-items-center">
+          <LoaderCircleIcon
+            size={28}
+            animate
+            animation="default"
+            className="text-muted-foreground"
+          />
+        </div>
+      )
+    }
+
+    if (detail.isError) {
+      return (
+        <div className="grid h-full place-items-center px-4 text-center">
+          <div className="space-y-3">
+            <p className="text-lg font-medium">Chat not found</p>
+            <p className="text-sm text-muted-foreground">
+              The chat you're looking for was deleted or doesn't belong to your account.
+            </p>
+          </div>
+        </div>
+      )
+    }
+
+    const turns = detail.data?.turns ?? []
+
+    return (
+      <div className="flex h-full flex-col">
+        <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto py-6">
+          {turns.length === 0 && (
+            <div className="grid h-full place-items-center px-6 text-center">
+              <div className="space-y-2">
+                <p className="text-lg font-medium">Start the conversation</p>
+                <p className="text-sm text-muted-foreground">
+                  Ask a question about a recent order, refund, or delivery. The
+                  bot supports English, Hindi, and other Indian languages.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <AnimatePresence initial={false}>
+            {turns.map((t) => (
+              <MessageBubble
+                key={`${t.turn_no}-${t.role}-${t.created_at}`}
+                role={t.role}
+                message={t.message ?? ""}
+                actions={t.actions}
+              />
+            ))}
+          </AnimatePresence>
+
+          {send.isPending && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="flex justify-start px-4"
+            >
+              <div className="rounded-2xl rounded-bl-sm bg-muted px-4 py-2.5 text-sm text-muted-foreground">
+                <ShimmeringText text="Thinking…" />
+              </div>
+            </motion.div>
+          )}
+        </div>
+
+        <MessageInput
+          disabled={send.isPending}
+          isSending={send.isPending}
+          onSend={async (message) => {
+            try {
+              await send.mutateAsync({ sessionId, message })
+            } catch (err) {
+              toast.error(humaniseError(err, "Message failed to send"))
+            }
+          }}
+        />
+      </div>
+    )
+  }
 }
 
 function EmptyState({
@@ -154,16 +177,12 @@ function EmptyState({
             <ShimmeringText text="How can we help today?" />
           </p>
           <p className="text-sm text-muted-foreground">
-            Sign in complete. Ask about a recent order, or start a new chat
-            from the sidebar. English, Hindi, and other Indian languages are
-            supported.
+            Ask about a recent order, or start a new chat from the sidebar.
+            English, Hindi, and other Indian languages are supported.
           </p>
         </div>
       </div>
-      <MessageInput
-        disabled={disabled}
-        onSend={onStart}
-      />
+      <MessageInput disabled={disabled} onSend={onStart} />
     </div>
   )
 }

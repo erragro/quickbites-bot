@@ -19,6 +19,8 @@ from app.migrations import bootstrap
 from app.models import User
 from app.runners import dev_runner, prod_runner
 from app.runners.session_runner import SessionSummary
+from app.modules.admin_routes import router as admin_router
+from app.modules.routes import router as modules_router
 from app.sessions.routes import router as sessions_router
 
 
@@ -49,6 +51,8 @@ app.add_exception_handler(
 
 app.include_router(auth_router)
 app.include_router(sessions_router)
+app.include_router(modules_router)
+app.include_router(admin_router)
 
 
 _UNSAFE_JWT_DEFAULT = "CHANGE_ME_IN_PRODUCTION_this_default_is_unsafe"

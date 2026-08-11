@@ -65,6 +65,15 @@ class Settings(BaseSettings):
     auth_signup_rate: str = "10/hour"
     auth_login_rate: str = "30/hour"
 
+    # Super-admin bootstrap. If set, the first signup that matches this
+    # email becomes super_admin. If not set, the very first user to sign
+    # up becomes super_admin (single-tenant / demo mode).
+    super_admin_email: str = ""
+
+    # Newly signed-up users get 'view' access to these module keys by
+    # default so the demo works out of the box. Comma-separated env var.
+    default_module_keys: str = "chatbot"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
