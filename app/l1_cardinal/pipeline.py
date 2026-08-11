@@ -29,6 +29,7 @@ from app.l1_cardinal import (
     phase5_dispatcher,
 )
 from app.l2_agents import (
+    language_detector,
     stage0_classifier,
     stage1_evaluator,
     stage2_validator,
@@ -246,10 +247,18 @@ def run_turn(
     )
 
     try:
+        # ------ Language detection (Google Cloud Translation) ------
+        # A dedicated, cheap detect call — not folded into Stage 0's prompt —
+        # run only once we're past the dedup check, since a cache hit never
+        # needs it. Everything downstream (Stage 0/1/3) routes off this.
+        t_start = time.perf_counter()
+        detected_language = language_detector.detect(message)
+        timings["language_detect"] = int((time.perf_counter() - t_start) * 1000)
+
         # ------ Stage 0: Classify ------
         t_start = time.perf_counter()
         classification = stage0_classifier.classify(
-            message, history_snippet=history_snippet
+            message, history_snippet=history_snippet, language=detected_language
         )
         timings["stage0_classify"] = int((time.perf_counter() - t_start) * 1000)
 
@@ -295,6 +304,7 @@ def run_turn(
             already_escalated=already_escalated,
             prior_bot_message=prior_bot_message,
             turn_no=session.turn_no,
+            language=detected_language,
         )
         timings["stage1_evaluate"] = int((time.perf_counter() - t_start) * 1000)
 
@@ -324,6 +334,7 @@ def run_turn(
             final_actions=stage2.final_actions,
             prior_bot_message=prior_bot_message,
             already_escalated=already_escalated,
+            language=detected_language,
         )
         timings["stage3_respond"] = int((time.perf_counter() - t_start) * 1000)
 

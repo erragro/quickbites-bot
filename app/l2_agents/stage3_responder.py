@@ -14,6 +14,7 @@ import json
 import re
 from typing import Any
 
+from app.l2_agents.language_detector import LANGUAGE_NAMES
 from app.l2_agents.llm_provider import get_provider
 from app.schemas import (
     Classification,
@@ -23,7 +24,7 @@ from app.schemas import (
 )
 
 
-_SYSTEM = """You write short, warm, human-sounding replies for a food-delivery support agent.
+_SYSTEM_BASE = """You write short, warm, human-sounding replies for a food-delivery support agent.
 
 Constraints:
 - Do NOT reveal you are a bot or an AI. Do NOT mention "policy", "system", "rules",
@@ -67,6 +68,15 @@ Return ONLY a JSON object, no prose:
   "bot_message": "<the reply>"
 }
 """
+
+
+def _system_prompt(language: str) -> str:
+    name = LANGUAGE_NAMES.get(language, "English")
+    return (
+        _SYSTEM_BASE
+        + f"\n\nRespond in {name}, matching the language the customer wrote in. "
+        "Do not switch to English unless the customer does."
+    )
 
 
 _ACTION_SUMMARY_KEYS = {
@@ -152,6 +162,7 @@ def respond(
     final_actions: list[ProposedAction],
     prior_bot_message: str | None = None,
     already_escalated: bool = False,
+    language: str = "en",
 ) -> Stage3Output:
     payload = {
         "customer_message": customer_message,
@@ -175,9 +186,9 @@ def respond(
         ),
     }
 
-    raw = get_provider().chat(
+    raw = get_provider(language).chat(
         role="smart",
-        system=_SYSTEM,
+        system=_system_prompt(language),
         user=(
             "Write the reply given the decisions already made. "
             "Context:\n" + json.dumps(payload, default=str, indent=2)

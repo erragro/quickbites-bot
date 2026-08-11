@@ -1,9 +1,16 @@
 """
-Idempotent bootstrap: create schema, load app.db rows into Postgres if empty,
-create our runtime tables (sessions, turns, bot_executions).
+Idempotent startup: create starter-data schema, load app.db rows into
+Postgres if empty, then run Alembic migrations for the runtime tables
+(sessions, turns, bot_executions, users).
 
-Types intentionally follow the SQLite source: dates are stored as TEXT (ISO-8601)
-so the migration is a straight copy. All "recent" math in abuse_rules.py works
+Split of responsibilities:
+- STARTER schema (this file) — read-only snapshot from data/app.db. Loaded via
+  raw SQL because Alembic doesn't help with a fixed-forever data table.
+- RUNTIME schema (alembic/versions/) — tables the app writes to every turn
+  plus the auth tables. Version-controlled and rollback-able.
+
+Types intentionally follow the SQLite source: dates are stored as TEXT
+(ISO-8601) so the copy is 1:1. All "recent" math in abuse_rules.py works
 against the pinned DATA_TODAY constant in config.py.
 """
 
@@ -13,9 +20,11 @@ import logging
 import sqlite3
 from pathlib import Path
 
+from alembic import command
+from alembic.config import Config as AlembicConfig
 from sqlalchemy import text
 
-from app.config import SQLITE_SEED_PATH
+from app.config import PROJECT_ROOT, SQLITE_SEED_PATH
 from app.db import engine
 
 
@@ -126,48 +135,8 @@ SCHEMA_DDL = [
         notes text
     );
     """,
-    """
-    CREATE TABLE IF NOT EXISTS sessions (
-        session_id text PRIMARY KEY,
-        simulator_session_id text UNIQUE,
-        mode text,
-        scenario_id integer,
-        max_turns integer,
-        known_order_id integer,
-        known_customer_id integer,
-        opened_at timestamptz DEFAULT now(),
-        closed_at timestamptz,
-        close_reason text,
-        final_score jsonb
-    );
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS turns (
-        id serial PRIMARY KEY,
-        session_id text REFERENCES sessions(session_id),
-        turn_no integer NOT NULL,
-        role text NOT NULL,
-        message text,
-        classification jsonb,
-        actions jsonb,
-        reasoning text,
-        route text,
-        escalation_group text,
-        execution_id text,
-        stage_timings_ms jsonb,
-        created_at timestamptz DEFAULT now()
-    );
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS bot_executions (
-        execution_id text PRIMARY KEY,
-        session_id text REFERENCES sessions(session_id),
-        turn_no integer,
-        escalation_group text,
-        priority text,
-        created_at timestamptz DEFAULT now()
-    );
-    """,
+    # Runtime tables (sessions, turns, bot_executions, users) live in
+    # alembic/versions/ — see _run_migrations() below.
 ]
 
 STARTER_TABLES = [
@@ -180,6 +149,46 @@ def _create_schema() -> None:
     with engine.begin() as conn:
         for ddl in SCHEMA_DDL:
             conn.execute(text(ddl))
+
+
+def _table_exists(conn, name: str) -> bool:
+    return conn.execute(
+        text(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_name = :n)"
+        ),
+        {"n": name},
+    ).scalar_one()
+
+
+def _run_migrations() -> str:
+    """
+    Apply pending Alembic migrations.
+
+    Legacy-DB handling: if `sessions` etc. already exist (created by the old
+    bootstrap.py before Alembic was introduced) but there's no
+    `alembic_version` row, we stamp the DB at revision 001 so the initial
+    migration is not re-applied against tables that are already there. Any
+    subsequent revisions run normally on top.
+
+    Returns the current head revision after migration for logging.
+    """
+    cfg = AlembicConfig(str(PROJECT_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(PROJECT_ROOT / "alembic"))
+
+    with engine.begin() as conn:
+        has_alembic = _table_exists(conn, "alembic_version")
+        has_sessions = _table_exists(conn, "sessions")
+
+    if has_sessions and not has_alembic:
+        logger.info("legacy DB detected (sessions exists, no alembic_version); stamping at 001")
+        command.stamp(cfg, "001")
+
+    command.upgrade(cfg, "head")
+
+    with engine.connect() as conn:
+        head = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
+    return head or "unknown"
 
 
 def _table_is_empty(table: str) -> bool:
@@ -210,6 +219,16 @@ def _copy_sqlite_table(table: str, sqlite_path: Path) -> int:
 
 
 def run(force: bool = False) -> dict:
+    """
+    Full startup path:
+      1. Create starter-data schema (customers, orders, riders, restaurants, …)
+      2. Copy starter rows from data/app.db into Postgres if empty
+      3. Apply Alembic migrations for runtime + auth tables
+
+    Order matters: starter schema first so any FK from a runtime table to a
+    starter table would still resolve; Alembic runs last so schema evolution
+    can safely assume both layers exist.
+    """
     if not SQLITE_SEED_PATH.exists():
         raise FileNotFoundError(f"Missing seed db at {SQLITE_SEED_PATH}")
 
@@ -220,8 +239,10 @@ def run(force: bool = False) -> dict:
             loaded[table] = _copy_sqlite_table(table, SQLITE_SEED_PATH)
         else:
             loaded[table] = 0
-    logger.info("bootstrap complete: %s", loaded)
-    return loaded
+
+    alembic_head = _run_migrations()
+    logger.info("bootstrap complete: seed=%s alembic_head=%s", loaded, alembic_head)
+    return {"seed": loaded, "alembic_head": alembic_head}
 
 
 if __name__ == "__main__":

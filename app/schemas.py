@@ -91,6 +91,7 @@ class Classification(BaseModel):
     sentiment: Literal["angry", "frustrated", "neutral", "polite"] = "neutral"
     injection_attempt: bool = False
     verbal_abuse: bool = False
+    detected_language: str = "en"
 
 
 class AbuseSignals(BaseModel):

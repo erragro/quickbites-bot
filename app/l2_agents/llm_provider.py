@@ -36,24 +36,86 @@ class LLMProvider(Protocol):
     ) -> str: ...
 
 
-class GeminiGatewayProvider:
+class VertexAIProvider:
     """
-    Thin httpx wrapper around the candidate-facing Gemini Gateway.
-    POST /chat with Bearer auth. Returns the assistant's text as a string.
+    Calls Gemini directly through Vertex AI (google-genai SDK, vertexai=True)
+    — no intermediate proxy service. Authenticates via standard Google
+    Application Default Credentials: set GOOGLE_APPLICATION_CREDENTIALS to a
+    service-account key file, or run `gcloud auth application-default login`
+    for local dev. Requires GOOGLE_CLOUD_PROJECT to have Vertex AI enabled
+    and billing active.
     """
 
-    def __init__(self, base_url: str, secret: str, fast_model: str, smart_model: str):
-        self._base_url = base_url.rstrip("/")
-        self._secret = secret
+    def __init__(self, project: str, location: str, fast_model: str, smart_model: str):
+        from google import genai  # noqa: WPS433
+
+        self._client = genai.Client(vertexai=True, project=project, location=location)
         self._model_by_role = {"fast": fast_model, "smart": smart_model}
-        # gemini-2.5-pro can take 30-60s on long prompts; size accordingly.
-        self._client = httpx.Client(timeout=httpx.Timeout(180.0, connect=10.0))
+
+    def _resolve(self, role: str) -> str:
+        return self._model_by_role.get(role, self._model_by_role["smart"])
+
+    def chat(
+        self,
+        *,
+        role: str,
+        system: str,
+        user: str,
+        max_tokens: int = 1024,
+        temperature: float = 0.2,
+    ) -> str:
+        from google.genai import types  # noqa: WPS433
+        from google.genai import errors  # noqa: WPS433
+
+        model = self._resolve(role)
+        config = types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+        max_attempts = 4
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                resp = self._client.models.generate_content(
+                    model=model, contents=user, config=config,
+                )
+                return resp.text or ""
+            except errors.APIError as exc:
+                last_exc = exc
+                status = getattr(exc, "code", None)
+                if status == 429 or (status and 500 <= status < 600):
+                    delay = min(16.0, (2 ** attempt) + random.uniform(0, 1))
+                    logger.warning(
+                        "vertex ai %s on attempt %d/%d; sleeping %.1fs",
+                        status, attempt, max_attempts, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("vertex ai: retries exhausted")
+
+
+class SarvamProvider:
+    """
+    Sarvam AI's OpenAI-compatible chat completions endpoint. Used for every
+    detected language outside Gemini's {en, hi} — see language_detector.py
+    for the routing rule.
+    """
+
+    def __init__(self, api_key: str, fast_model: str, smart_model: str):
+        self._api_key = api_key
+        self._model_by_role = {"fast": fast_model, "smart": smart_model}
+        self._client = httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0))
 
     def _resolve(self, role: str) -> str:
         return self._model_by_role.get(role, self._model_by_role["smart"])
 
     def _post_with_retry(self, body: dict, headers: dict, max_attempts: int = 4) -> dict:
-        url = f"{self._base_url}/chat"
+        url = "https://api.sarvam.ai/v1/chat/completions"
         last_exc: Exception | None = None
         for attempt in range(1, max_attempts + 1):
             try:
@@ -65,7 +127,7 @@ class GeminiGatewayProvider:
                     else:
                         delay = min(16.0, (2 ** attempt) + random.uniform(0, 1))
                     logger.warning(
-                        "gemini gateway %s on attempt %d/%d; sleeping %.1fs",
+                        "sarvam %s on attempt %d/%d; sleeping %.1fs",
                         resp.status_code, attempt, max_attempts, delay,
                     )
                     time.sleep(delay)
@@ -76,13 +138,13 @@ class GeminiGatewayProvider:
                 last_exc = exc
                 delay = min(16.0, (2 ** attempt) + random.uniform(0, 1))
                 logger.warning(
-                    "gemini gateway transport error on attempt %d/%d (%s); sleeping %.1fs",
+                    "sarvam transport error on attempt %d/%d (%s); sleeping %.1fs",
                     attempt, max_attempts, type(exc).__name__, delay,
                 )
                 time.sleep(delay)
         if last_exc:
             raise last_exc
-        raise RuntimeError("gemini gateway: retries exhausted")
+        raise RuntimeError("sarvam: retries exhausted")
 
     def chat(
         self,
@@ -95,93 +157,41 @@ class GeminiGatewayProvider:
     ) -> str:
         body = {
             "model": self._resolve(role),
-            "system": system,
-            "messages": [{"role": "user", "content": user}],
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
         headers = {
-            "Authorization": f"Bearer {self._secret}",
+            "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
         data = self._post_with_retry(body, headers)
-        # Gateway returns the assistant text in common shapes; be permissive.
-        if isinstance(data, dict):
-            for key in ("reply", "response", "content", "text", "message", "output"):
-                v = data.get(key)
-                if isinstance(v, str) and v.strip():
-                    return v
-            # Anthropic-style content blocks
-            content = data.get("content")
-            if isinstance(content, list):
-                parts = [
-                    b.get("text", "") for b in content
-                    if isinstance(b, dict) and b.get("type") in (None, "text")
-                ]
-                joined = "".join(parts).strip()
-                if joined:
-                    return joined
-            # OpenAI-style choices
-            choices = data.get("choices")
-            if isinstance(choices, list) and choices:
-                msg = choices[0].get("message") or {}
-                if isinstance(msg, dict):
-                    c = msg.get("content")
-                    if isinstance(c, str):
-                        return c
-        logger.warning("Gemini Gateway returned unexpected shape: %r", str(data)[:300])
+        choices = data.get("choices") if isinstance(data, dict) else None
+        if isinstance(choices, list) and choices:
+            msg = choices[0].get("message") or {}
+            content = msg.get("content")
+            if isinstance(content, str):
+                return content
+        logger.warning("Sarvam returned unexpected shape: %r", str(data)[:300])
         return ""
 
 
-class AnthropicProvider:
-    """
-    Preserved so the system is genuinely provider-agnostic. Lazily imports the
-    SDK so installs without the anthropic package still work when Gemini is
-    selected.
-    """
+@lru_cache(maxsize=4)
+def get_provider(language: str = "en") -> LLMProvider:
+    from app.l2_agents.language_detector import GEMINI_LANGUAGES
 
-    def __init__(self, api_key: str, fast_model: str, smart_model: str):
-        from anthropic import Anthropic  # noqa: WPS433
-
-        self._client = Anthropic(api_key=api_key)
-        self._model_by_role = {"fast": fast_model, "smart": smart_model}
-
-    def _resolve(self, role: str) -> str:
-        return self._model_by_role.get(role, self._model_by_role["smart"])
-
-    def chat(
-        self,
-        *,
-        role: str,
-        system: str,
-        user: str,
-        max_tokens: int = 1024,
-        temperature: float = 0.2,
-    ) -> str:
-        resp = self._client.messages.create(
-            model=self._resolve(role),
-            max_tokens=max_tokens,
-            system=system,
-            temperature=temperature,
-            messages=[{"role": "user", "content": user}],
+    if language in GEMINI_LANGUAGES:
+        return VertexAIProvider(
+            project=settings.google_cloud_project,
+            location=settings.google_cloud_location,
+            fast_model=settings.gemini_fast_model,
+            smart_model=settings.gemini_smart_model,
         )
-        return "".join(
-            b.text for b in resp.content if getattr(b, "type", "") == "text"
-        )
-
-
-@lru_cache(maxsize=1)
-def get_provider() -> LLMProvider:
-    name = (settings.llm_provider or "gemini_gateway").lower()
-    if name == "anthropic":
-        return AnthropicProvider(
-            api_key=settings.anthropic_api_key,
-            fast_model=settings.anthropic_fast_model,
-            smart_model=settings.anthropic_model,
-        )
-    return GeminiGatewayProvider(
-        base_url=settings.gemini_gateway_url,
-        secret=settings.gemini_gateway_secret,
-        fast_model=settings.gemini_fast_model,
-        smart_model=settings.gemini_smart_model,
+    return SarvamProvider(
+        api_key=settings.sarvam_api_key,
+        fast_model=settings.sarvam_fast_model,
+        smart_model=settings.sarvam_smart_model,
     )

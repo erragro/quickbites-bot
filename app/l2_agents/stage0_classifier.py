@@ -66,12 +66,17 @@ def classify(
     customer_message: str,
     *,
     history_snippet: Optional[str] = None,
+    language: str = "en",
 ) -> Classification:
+    """`language` is the ISO-639 code from language_detector.detect(), run
+    once earlier in the pipeline — passed in here so the fast-tier call
+    routes to whichever provider actually understands it (Sarvam for
+    non-en/hi), not so this stage re-detects anything itself."""
     user_content = customer_message
     if history_snippet:
         user_content = f"Recent turns:\n{history_snippet}\n\nLatest customer message:\n{customer_message}"
 
-    raw = get_provider().chat(
+    raw = get_provider(language).chat(
         role="fast",
         system=_SYSTEM,
         user=user_content,
@@ -99,4 +104,5 @@ def classify(
         else "neutral",
         injection_attempt=bool(data.get("injection_attempt", False)),
         verbal_abuse=bool(data.get("verbal_abuse", False)),
+        detected_language=language,
     )

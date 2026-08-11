@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 
 from app import simulator_client
+from app.auth.dependencies import get_current_active_user
+from app.auth.routes import limiter as auth_limiter, router as auth_router
+from app.config import settings
 from app.db import db_session, engine
 from app.migrations import bootstrap
+from app.models import User
 from app.runners import dev_runner, prod_runner
 from app.runners.session_runner import SessionSummary
+from app.sessions.routes import router as sessions_router
 
 
 logging.basicConfig(
@@ -27,14 +35,44 @@ app = FastAPI(
     description="Cardinal-inspired synchronous 5-phase + 4-stage LLM pipeline.",
 )
 
+# slowapi wiring — one shared Limiter is defined in app.auth.routes and
+# reused here so every rate-limited endpoint uses the same key function
+# and storage. The exception handler returns 429 JSON.
+app.state.limiter = auth_limiter
+app.add_exception_handler(
+    RateLimitExceeded,
+    lambda request, exc: JSONResponse(
+        status_code=429,
+        content={"detail": f"rate limit exceeded: {exc.detail}"},
+    ),
+)
+
+app.include_router(auth_router)
+app.include_router(sessions_router)
+
+
+_UNSAFE_JWT_DEFAULT = "CHANGE_ME_IN_PRODUCTION_this_default_is_unsafe"
+
 
 @app.on_event("startup")
 def _startup() -> None:
+    # Guard against shipping the default JWT secret to any non-dev env.
+    # ENV var `APP_ENV` is set by the container manifest; local runs leave
+    # it unset and we tolerate the default (with a loud warning).
+    env = os.getenv("APP_ENV", "local")
+    if settings.jwt_secret == _UNSAFE_JWT_DEFAULT:
+        if env != "local":
+            raise RuntimeError(
+                f"refusing to boot in APP_ENV={env} with the default JWT secret; "
+                "set the JWT_SECRET env var (Secret Manager in prod)."
+            )
+        logger.warning("using default JWT secret — safe for local dev only")
+
     try:
         loaded = bootstrap.run()
         logger.info("bootstrap %s", loaded)
     except Exception:
-        logger.exception("bootstrap failed — service will serve /healthz but runs will error")
+        logger.exception("bootstrap failed — service will serve /ping but runs will error")
 
 
 @app.get("/ping")
@@ -56,20 +94,33 @@ class RunDevBody(BaseModel):
     scenario_id: Optional[int] = None
 
 
+# The /run/* endpoints below drive the *simulator* — they're the internal
+# playback/eval surface, not the user-facing chat. They are auth-guarded so
+# only an authenticated user can burn quota against the hosted simulator.
+# User-facing chat lives under /api/sessions/{sid}/chat.
+
+
 @app.post("/run/dev")
-def run_dev(body: RunDevBody) -> SessionSummary:
+def run_dev(
+    body: RunDevBody,
+    _user: User = Depends(get_current_active_user),
+) -> SessionSummary:
     if body.scenario_id is not None and body.scenario_id not in (101, 102, 103, 104, 105):
         raise HTTPException(400, "scenario_id must be 101-105 or omitted")
     return dev_runner.run_dev(body.scenario_id)
 
 
 @app.post("/run/dev/all")
-def run_dev_all() -> list[SessionSummary]:
+def run_dev_all(
+    _user: User = Depends(get_current_active_user),
+) -> list[SessionSummary]:
     return dev_runner.run_all_rehearsal()
 
 
 @app.post("/run/prod")
-def run_prod() -> dict:
+def run_prod(
+    _user: User = Depends(get_current_active_user),
+) -> dict:
     results = prod_runner.run_prod_all()
     return {
         "sessions_run": len(results),
@@ -77,44 +128,10 @@ def run_prod() -> dict:
     }
 
 
-@app.get("/sessions/{session_id}")
-def get_session(session_id: str) -> dict:
-    with db_session() as db:
-        s = db.execute(
-            text("SELECT * FROM sessions WHERE session_id = :sid"),
-            {"sid": session_id},
-        ).first()
-        if not s:
-            raise HTTPException(404, "session not found")
-        turns = [
-            dict(r._mapping)
-            for r in db.execute(
-                text(
-                    """
-                    SELECT turn_no, role, message, classification, actions, reasoning,
-                           route, escalation_group, execution_id, stage_timings_ms, created_at
-                    FROM turns WHERE session_id = :sid
-                    ORDER BY id ASC
-                    """
-                ),
-                {"sid": session_id},
-            )
-        ]
-    session_row = dict(s._mapping)
-    return {"session": session_row, "turns": turns}
-
-
-@app.get("/sessions")
-def list_sessions(limit: int = 50) -> list[dict]:
-    with db_session() as db:
-        rows = db.execute(
-            text(
-                "SELECT session_id, mode, scenario_id, opened_at, closed_at, close_reason "
-                "FROM sessions ORDER BY opened_at DESC LIMIT :lim"
-            ),
-            {"lim": limit},
-        ).all()
-    return [dict(r._mapping) for r in rows]
+# NOTE: the old anonymous /sessions and /sessions/{id} routes were removed —
+# they returned every session across every user with no ownership check.
+# Use /api/sessions and /api/sessions/{sid} (both authenticated + user-scoped)
+# from the sessions router instead.
 
 
 @app.get("/score")

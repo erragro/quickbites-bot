@@ -194,6 +194,7 @@ def evaluate(
     prior_bot_message: str | None = None,
     turn_no: int = 1,
     max_tool_turns: int = 0,  # kept for call-site compatibility; unused
+    language: str = "en",
 ) -> Stage1Output:
     user = _render_context(
         ctx,
@@ -208,7 +209,10 @@ def evaluate(
         turn_no,
     )
 
-    raw = get_provider().chat(
+    # Routed by language, same as Stage 0/3 — comprehension quality on the
+    # customer's own message matters here even though this stage's own
+    # output (reasoning, JSON) stays internal/English.
+    raw = get_provider(language).chat(
         role="smart",
         system=_system_prompt(),
         user=user,
