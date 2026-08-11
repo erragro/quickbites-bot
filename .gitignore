@@ -12,3 +12,8 @@ venv/
 *.log
 .DS_Store
 QuickBites_Interview_Prep*.docx
+
+# Frontend
+frontend/node_modules
+frontend/dist
+frontend/.vite
