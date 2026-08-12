@@ -19,6 +19,10 @@ from app.migrations import bootstrap
 from app.models import User
 from app.runners import dev_runner, prod_runner
 from app.runners.session_runner import SessionSummary
+from app.conversation_studio.routes import (
+    issue_router as chat_issue_router,
+    router as chat_starters_router,
+)
 from app.modules.admin_routes import router as admin_router
 from app.modules.routes import router as modules_router
 from app.sessions.routes import router as sessions_router
@@ -51,6 +55,8 @@ app.add_exception_handler(
 
 app.include_router(auth_router)
 app.include_router(sessions_router)
+app.include_router(chat_starters_router)
+app.include_router(chat_issue_router)
 app.include_router(modules_router)
 app.include_router(admin_router)
 

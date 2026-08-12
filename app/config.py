@@ -28,10 +28,17 @@ class Settings(BaseSettings):
     # language_detector.py + llm_provider.get_provider) — en/hi → Gemini,
     # everything else → Sarvam. No manual provider toggle.
 
-    # Gemini via Vertex AI, direct (en, hi). Auth is standard Google
-    # Application Default Credentials — GOOGLE_APPLICATION_CREDENTIALS
-    # (service-account key file) or `gcloud auth application-default login`
-    # — not a Settings field, the google-genai SDK reads it itself.
+    # Gemini — supports two auth paths, chosen at runtime by which env
+    # var is set:
+    #   1. GEMINI_API_KEY (Google AI Studio, https://aistudio.google.com/apikey)
+    #      — bare API key, no Google Cloud project needed. Simplest for
+    #      local dev + demos.
+    #   2. GOOGLE_APPLICATION_CREDENTIALS + GOOGLE_CLOUD_PROJECT
+    #      (Vertex AI). Service-account JSON, or ADC via
+    #      `gcloud auth application-default login`. Required in prod
+    #      when you want VPC-SC, IAM, or Vertex-only models.
+    # If GEMINI_API_KEY is set it wins. Otherwise Vertex is attempted.
+    gemini_api_key: str = ""
     google_cloud_project: str = ""
     google_cloud_location: str = "asia-south1"
     gemini_fast_model: str = "gemini-2.5-flash-lite"

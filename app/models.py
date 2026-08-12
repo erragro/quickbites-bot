@@ -19,6 +19,8 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
+from decimal import Decimal
+
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -27,6 +29,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     PrimaryKeyConstraint,
     String,
     Text,
@@ -34,7 +37,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, backref, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
@@ -194,6 +197,20 @@ class ChatSession(Base):
     )
     close_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     final_score: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # Set the moment a customer taps a chip; persists so every subsequent
+    # turn in the session knows which issue-type contract to enrich
+    # against. Nullable — a free-text-first session may never carry one.
+    issue_type_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("issue_types.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    business_unit_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("business_units.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     user: Mapped[Optional["User"]] = relationship(back_populates="sessions")
     turns: Mapped[list["Turn"]] = relationship(
@@ -250,4 +267,209 @@ class BotExecution(Base):
     priority: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Conversation Studio — config-driven chip-tap chatbot.
+#
+# BusinessUnit → IssueType is a tree (top-level BUs are hierarchical if
+# ever needed via parent_id). Each IssueType declares which data points
+# the enricher must fetch when the customer taps it, and carries multiple
+# acknowledgment templates whose {{variable}} slots are filled from the
+# enriched context blob. `routes_to_intent` binds the admin-facing name
+# back to the existing Stage 2 matrix so the deterministic policy layer
+# stays untouched.
+# ---------------------------------------------------------------------------
+
+
+class BusinessUnit(Base):
+    __tablename__ = "business_units"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    parent_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("business_units.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    code: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    icon: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+    # Self-referential parent ↔ children. `remote_side="BusinessUnit.id"`
+    # on the parent backref tells SQLAlchemy which end is the "one" side.
+    children: Mapped[list["BusinessUnit"]] = relationship(
+        "BusinessUnit",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        backref=backref("parent", remote_side="BusinessUnit.id"),
+    )
+    issue_types: Mapped[list["IssueType"]] = relationship(
+        back_populates="business_unit",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="IssueType.sort_order",
+    )
+
+
+class DataPoint(Base):
+    """Registry of Python fetchers exposed to the admin panel by key.
+
+    Admin CAN'T register new fetchers through the API — those are code
+    (see app/conversation_studio/service.py::FETCHER_REGISTRY). They can
+    only pick from the ones already registered. Prevents arbitrary code
+    execution while still giving them full control over per-issue-type
+    data contracts.
+    """
+
+    __tablename__ = "data_point_registry"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    key: Mapped[str] = mapped_column(String(80), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(150), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    fetcher_ref: Mapped[str] = mapped_column(String(150), nullable=False)
+    is_system: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
+class IssueType(Base):
+    __tablename__ = "issue_types"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    business_unit_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("business_units.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    code: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    icon: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    routes_to_intent: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+    business_unit: Mapped["BusinessUnit"] = relationship(back_populates="issue_types")
+    data_point_links: Mapped[list["IssueTypeDataPoint"]] = relationship(
+        back_populates="issue_type",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="IssueTypeDataPoint.sort_order",
+    )
+    templates: Mapped[list["AcknowledgmentTemplate"]] = relationship(
+        back_populates="issue_type",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("business_unit_id", "code", name="uq_issue_types_bu_code"),
+        Index("ix_issue_types_routed_intent", "routes_to_intent"),
+    )
+
+
+class IssueTypeDataPoint(Base):
+    __tablename__ = "issue_type_data_points"
+
+    issue_type_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("issue_types.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    data_point_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("data_point_registry.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    is_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+
+    issue_type: Mapped["IssueType"] = relationship(back_populates="data_point_links")
+    data_point: Mapped["DataPoint"] = relationship()
+
+    __table_args__ = (
+        PrimaryKeyConstraint(
+            "issue_type_id", "data_point_id", name="pk_issue_type_data_points",
+        ),
+    )
+
+
+class AcknowledgmentTemplate(Base):
+    __tablename__ = "acknowledgment_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    issue_type_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("issue_types.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    template: Mapped[str] = mapped_column(Text, nullable=False)
+    weight: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+    issue_type: Mapped["IssueType"] = relationship(back_populates="templates")
+
+    __table_args__ = (
+        Index(
+            "ix_ack_templates_issue_type", "issue_type_id", "is_active",
+        ),
+    )
+
+
+class IntentDetectionCase(Base):
+    """
+    Grows into the training set for a distilled deterministic intent
+    classifier. Every free-text turn adds a row; over time the library
+    replaces the LLM-based Stage 0 on the hot path (see design memo).
+    """
+
+    __tablename__ = "intent_detection_cases"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    customer_message: Mapped[str] = mapped_column(Text, nullable=False)
+    matched_issue_type_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("issue_types.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # "rule" | "llm" | "human_verified"
+    matched_by: Mapped[str] = mapped_column(String(20), nullable=False)
+    confidence: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(4, 3), nullable=True,
+    )
+    seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    seen_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    __table_args__ = (
+        Index("ix_intent_cases_lookup", "matched_issue_type_id", "matched_by"),
     )

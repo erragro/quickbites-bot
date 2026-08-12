@@ -38,18 +38,46 @@ class LLMProvider(Protocol):
 
 class VertexAIProvider:
     """
-    Calls Gemini directly through Vertex AI (google-genai SDK, vertexai=True)
-    — no intermediate proxy service. Authenticates via standard Google
-    Application Default Credentials: set GOOGLE_APPLICATION_CREDENTIALS to a
-    service-account key file, or run `gcloud auth application-default login`
-    for local dev. Requires GOOGLE_CLOUD_PROJECT to have Vertex AI enabled
-    and billing active.
+    Calls Gemini through either:
+      - Google AI Studio (bare API key, GEMINI_API_KEY env var) — simplest;
+        chosen automatically when settings.gemini_api_key is set.
+      - Vertex AI (google-genai SDK, vertexai=True) — needs Application
+        Default Credentials (GOOGLE_APPLICATION_CREDENTIALS to a
+        service-account JSON, or `gcloud auth application-default login`)
+        plus GOOGLE_CLOUD_PROJECT with Vertex AI enabled + active billing.
+
+    Class name stays `VertexAIProvider` for import stability; the docstring
+    is the single source of truth on what it actually does.
     """
 
-    def __init__(self, project: str, location: str, fast_model: str, smart_model: str):
+    def __init__(
+        self,
+        *,
+        api_key: str = "",
+        project: str = "",
+        location: str = "",
+        fast_model: str,
+        smart_model: str,
+    ):
         from google import genai  # noqa: WPS433
 
-        self._client = genai.Client(vertexai=True, project=project, location=location)
+        # Preference: Vertex (project + ADC) whenever a project is set,
+        # because setup_adc.sh implicitly enables Vertex AI on the project,
+        # and Vertex works cleanly with quota + IAM in production. Fall
+        # back to AI Studio (bare API key) only if no project is available.
+        if project:
+            self._client = genai.Client(
+                vertexai=True, project=project, location=location,
+            )
+            self._auth_mode = "vertex"
+        elif api_key:
+            self._client = genai.Client(api_key=api_key)
+            self._auth_mode = "ai_studio"
+        else:
+            raise RuntimeError(
+                "Gemini provider needs either GOOGLE_CLOUD_PROJECT (Vertex + ADC) "
+                "or GEMINI_API_KEY (AI Studio)."
+            )
         self._model_by_role = {"fast": fast_model, "smart": smart_model}
 
     def _resolve(self, role: str) -> str:
@@ -68,10 +96,20 @@ class VertexAIProvider:
         from google.genai import errors  # noqa: WPS433
 
         model = self._resolve(role)
+
+        # Gemini 2.5-family "thinking" adds 5-15s per Stage 1/3 call and
+        # buys us nothing here — deterministic Stage 2 validates every
+        # action set the LLM proposes anyway, so extra internal reasoning
+        # is a latency tax on decisions we then override in Python.
+        # thinking_budget=0 turns it off. flash-lite ignores this
+        # (thinking is off by default there), flash + pro honour it.
+        thinking_off = types.ThinkingConfig(thinking_budget=0)
+
         config = types.GenerateContentConfig(
             system_instruction=system,
             max_output_tokens=max_tokens,
             temperature=temperature,
+            thinking_config=thinking_off,
         )
 
         max_attempts = 4
@@ -184,7 +222,10 @@ def get_provider(language: str = "en") -> LLMProvider:
     from app.l2_agents.language_detector import GEMINI_LANGUAGES
 
     if language in GEMINI_LANGUAGES:
+        # AI Studio path wins when a bare key is present. Otherwise we
+        # fall through to Vertex AI + ADC.
         return VertexAIProvider(
+            api_key=settings.gemini_api_key,
             project=settings.google_cloud_project,
             location=settings.google_cloud_location,
             fast_model=settings.gemini_fast_model,
