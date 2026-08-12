@@ -61,6 +61,12 @@ def get_starters(
             [it for it in unit.issue_types if it.is_active],
             key=lambda it: (it.sort_order, it.name),
         )
+        # Skip empty categories — they render as blank sections in the
+        # chip tree, which looks broken. If an admin creates a BU but
+        # hasn't attached any issue types yet, hide it from the public
+        # tree until they do.
+        if not chips:
+            continue
         trees.append(
             BusinessUnitTree(
                 id=unit.id,

@@ -5,6 +5,7 @@ import { AuthGuard } from "@/components/AuthGuard"
 import { ModuleGuard } from "@/components/ModuleGuard"
 import { AdminPage } from "@/pages/AdminPage"
 import { ChatPage } from "@/pages/ChatPage"
+import { ConversationStudioPage } from "@/pages/ConversationStudioPage"
 import { HomePage } from "@/pages/HomePage"
 import { LoginPage } from "@/pages/LoginPage"
 import { SignupPage } from "@/pages/SignupPage"
@@ -34,10 +35,15 @@ export const router = createBrowserRouter([
           },
 
           // Admin — orthogonal to modules; gated by is_super_admin.
+          // /admin is the users panel; /admin/conversation is the
+          // Conversation Studio (chip-tap taxonomy + templates).
           {
             path: "admin",
             element: <ModuleGuard superAdminOnly />,
-            children: [{ index: true, element: <AdminPage /> }],
+            children: [
+              { index: true, element: <AdminPage /> },
+              { path: "conversation", element: <ConversationStudioPage /> },
+            ],
           },
         ],
       },

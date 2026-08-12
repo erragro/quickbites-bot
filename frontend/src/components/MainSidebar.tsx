@@ -1,6 +1,6 @@
 import { NavLink } from "react-router-dom"
 import { motion } from "motion/react"
-import { Home as HomeIcon, ShieldCheck } from "lucide-react"
+import { Home as HomeIcon, Layers, ShieldCheck } from "lucide-react"
 
 import { UserMenu } from "@/components/UserMenu"
 import { useModules } from "@/hooks/useModules"
@@ -64,6 +64,12 @@ export function MainSidebar() {
               to="/admin"
               label="Admin"
               icon={<ShieldCheck className="size-4" />}
+              end
+            />
+            <NavItem
+              to="/admin/conversation"
+              label="Conversation Studio"
+              icon={<Layers className="size-4" />}
             />
           </>
         )}
