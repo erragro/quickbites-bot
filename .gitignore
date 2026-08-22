@@ -17,3 +17,14 @@ QuickBites_Interview_Prep*.docx
 frontend/node_modules
 frontend/dist
 frontend/.vite
+
+# Blog
+blog/node_modules
+blog/dist
+blog/.vite
+
+# Contract Reader storage (worker uploads)
+data/contracts/
+
+# Local Claude Code launch config
+.claude/

@@ -4,6 +4,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -38,10 +39,18 @@ export function UserMenu() {
         </Avatar>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel className="flex items-center gap-2 py-2">
-          <UserRound className="size-4" />
-          <span className="min-w-0 truncate">{user?.email ?? "Signed in"}</span>
-        </DropdownMenuLabel>
+        {/*
+          Base UI's GroupLabel MUST live inside a Group — the shadcn
+          DropdownMenuLabel wraps MenuPrimitive.GroupLabel and crashes
+          the whole app on open otherwise. Wrapping in DropdownMenuGroup
+          satisfies the context requirement.
+        */}
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="flex items-center gap-2 py-2">
+            <UserRound className="size-4" />
+            <span className="min-w-0 truncate">{user?.email ?? "Signed in"}</span>
+          </DropdownMenuLabel>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onSelect={() => logout()}

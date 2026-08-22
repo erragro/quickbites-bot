@@ -44,10 +44,20 @@ class Settings(BaseSettings):
     gemini_fast_model: str = "gemini-2.5-flash-lite"
     gemini_smart_model: str = "gemini-2.5-flash"
 
-    # Sarvam AI (all other Indian languages)
+    # Sarvam AI (all other Indian languages). Model naming as of 2026-08:
+    # sarvam-105b is the reasoning model (emits reasoning_content and eats
+    # into max_tokens); sarvam-105b-conversations is the non-thinking
+    # variant that returns directly. Default to conversations for both
+    # roles because Sarvam's starter tier caps completion tokens at 4096
+    # and the reasoning burns most of that on internal chain-of-thought.
     sarvam_api_key: str = ""
-    sarvam_fast_model: str = "sarvam-30b"
-    sarvam_smart_model: str = "sarvam-105b"
+    sarvam_fast_model: str = "sarvam-105b-conversations"
+    sarvam_smart_model: str = "sarvam-105b-conversations"
+    # Ceiling for max_tokens in Sarvam requests. Starter subscription cap
+    # is 4096; requests above this get rejected with a 400. The provider
+    # clamps every call to this ceiling so callers can pass their own
+    # ideal budget without knowing the subscription tier.
+    sarvam_max_tokens_cap: int = 4096
 
     # Google Cloud Translation API v2 (Basic) — language detection only
     google_translate_api_key: str = ""
@@ -79,7 +89,15 @@ class Settings(BaseSettings):
 
     # Newly signed-up users get 'view' access to these module keys by
     # default so the demo works out of the box. Comma-separated env var.
-    default_module_keys: str = "chatbot"
+    default_module_keys: str = "chatbot,contract_reader,rights_guide,schemes_finder,complaint_helper"
+
+    # -- Contract Reader storage --------------------------------------------
+    # Where uploaded contract files live. Local dev writes to a repo-relative
+    # path; prod (Cloud Run) overrides via env var to a GCS bucket path.
+    # See app/contracts/storage.py — LocalStorage prefixes this root, GCS
+    # variant treats it as bucket name + prefix.
+    contract_storage_root: str = "./data/contracts"
+    contract_max_bytes: int = 10 * 1024 * 1024  # 10 MB
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

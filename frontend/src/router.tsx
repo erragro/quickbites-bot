@@ -5,8 +5,11 @@ import { AuthGuard } from "@/components/AuthGuard"
 import { ModuleGuard } from "@/components/ModuleGuard"
 import { AdminPage } from "@/pages/AdminPage"
 import { ChatPage } from "@/pages/ChatPage"
+import { ContractDetailPage } from "@/pages/ContractDetailPage"
+import { ContractReaderPage } from "@/pages/ContractReaderPage"
 import { ConversationStudioPage } from "@/pages/ConversationStudioPage"
 import { HomePage } from "@/pages/HomePage"
+import { IdiomsAdminPage } from "@/pages/IdiomsAdminPage"
 import { LoginPage } from "@/pages/LoginPage"
 import { SignupPage } from "@/pages/SignupPage"
 
@@ -34,6 +37,18 @@ export const router = createBrowserRouter([
             ],
           },
 
+          // Contract Reader — upload list + clause-by-clause viewer.
+          //   /contracts             — upload zone + list
+          //   /contracts/:contractId — full analysis (three-stage output)
+          {
+            path: "contracts",
+            element: <ModuleGuard moduleKey="contract_reader" />,
+            children: [
+              { index: true, element: <ContractReaderPage /> },
+              { path: ":contractId", element: <ContractDetailPage /> },
+            ],
+          },
+
           // Admin — orthogonal to modules; gated by is_super_admin.
           // /admin is the users panel; /admin/conversation is the
           // Conversation Studio (chip-tap taxonomy + templates).
@@ -43,6 +58,7 @@ export const router = createBrowserRouter([
             children: [
               { index: true, element: <AdminPage /> },
               { path: "conversation", element: <ConversationStudioPage /> },
+              { path: "idioms", element: <IdiomsAdminPage /> },
             ],
           },
         ],

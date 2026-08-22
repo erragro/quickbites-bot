@@ -1,6 +1,6 @@
 import { NavLink } from "react-router-dom"
 import { motion } from "motion/react"
-import { Home as HomeIcon, Layers, ShieldCheck } from "lucide-react"
+import { Home as HomeIcon, Languages, Layers, ShieldCheck } from "lucide-react"
 
 import { UserMenu } from "@/components/UserMenu"
 import { useModules } from "@/hooks/useModules"
@@ -30,8 +30,14 @@ export function MainSidebar() {
   return (
     <aside className="flex h-full w-16 shrink-0 flex-col items-center border-r bg-sidebar py-3 text-sidebar-foreground md:w-56 md:items-stretch md:px-2">
       <div className="hidden px-2 pb-3 md:block">
-        <div className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-          QuickBites
+        <div className="flex items-baseline gap-1.5">
+          <div className="text-sm font-semibold tracking-tight text-sidebar-foreground">
+            Sreshtha
+          </div>
+          <div className="text-xs text-muted-foreground">श्रेष्ठ</div>
+        </div>
+        <div className="mt-0.5 text-[10px] uppercase tracking-widest text-muted-foreground">
+          for gig workers
         </div>
       </div>
 
@@ -70,6 +76,11 @@ export function MainSidebar() {
               to="/admin/conversation"
               label="Conversation Studio"
               icon={<Layers className="size-4" />}
+            />
+            <NavItem
+              to="/admin/idioms"
+              label="Idiom Library"
+              icon={<Languages className="size-4" />}
             />
           </>
         )}

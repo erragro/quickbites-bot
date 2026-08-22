@@ -19,9 +19,11 @@ from app.migrations import bootstrap
 from app.models import User
 from app.runners import dev_runner, prod_runner
 from app.runners.session_runner import SessionSummary
+from app.contracts.routes import router as contracts_router
 from app.conversation_studio.admin_routes import (
     router as conversation_admin_router,
 )
+from app.idioms.admin_routes import router as idioms_admin_router
 from app.conversation_studio.routes import (
     issue_router as chat_issue_router,
     router as chat_starters_router,
@@ -61,6 +63,8 @@ app.include_router(sessions_router)
 app.include_router(chat_starters_router)
 app.include_router(chat_issue_router)
 app.include_router(conversation_admin_router)
+app.include_router(contracts_router)
+app.include_router(idioms_admin_router)
 app.include_router(modules_router)
 app.include_router(admin_router)
 

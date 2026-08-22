@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, Iterator
 
 from app.l2_agents.language_detector import LANGUAGE_NAMES
 from app.l2_agents.llm_provider import get_provider
@@ -204,3 +204,80 @@ def respond(
     ]
 
     return Stage3Output(bot_message=bot_message, actions=simulator_actions)
+
+
+# ---------------------------------------------------------------------------
+# Streaming variant
+#
+# Used by the SSE chat endpoint. Yields raw text chunks as the model
+# produces them; the final actions list is known ahead of time (Stage 2
+# already computed it) and the caller emits it in the SSE 'done' event.
+#
+# Uses a plain-text prompt instead of the JSON-wrapped one — asking a
+# streaming model to emit `{"bot_message":"..."}` chunk-by-chunk means
+# the frontend would see quote characters and brace scaffolding mid-
+# stream. Cleaner to just stream the prose directly.
+# ---------------------------------------------------------------------------
+
+
+_STREAM_SYSTEM_SUFFIX = (
+    "\n\n"
+    "IMPORTANT: reply ONLY with the customer-facing text of your response. "
+    "No JSON, no code fences, no quotes wrapping the whole response. "
+    "Just the message itself."
+)
+
+
+def respond_stream(
+    *,
+    customer_message: str,
+    history_snippet: str,
+    classification: Classification,
+    ctx: EnrichedContext,
+    final_actions: list[ProposedAction],
+    prior_bot_message: str | None = None,
+    already_escalated: bool = False,
+    language: str = "en",
+) -> Iterator[str]:
+    payload = {
+        "customer_message": customer_message,
+        "prior_bot_message": prior_bot_message,
+        "already_escalated": already_escalated,
+        "history": history_snippet,
+        "classification": classification.model_dump(),
+        "validated_actions": _summarise_actions(final_actions),
+        "order_summary": (
+            {
+                "id": ctx.order.id,
+                "restaurant": ctx.restaurant.name if ctx.restaurant else None,
+                "total_inr": ctx.order.total_inr,
+                "status": ctx.order.status,
+            }
+            if ctx.order
+            else None
+        ),
+        "customer_first_name": (
+            ctx.customer.name.split()[0] if ctx.customer and ctx.customer.name else None
+        ),
+    }
+
+    yield from get_provider(language).chat_stream(
+        role="smart",
+        system=_system_prompt(language) + _STREAM_SYSTEM_SUFFIX,
+        user=(
+            "Write the reply given the decisions already made. "
+            "Context:\n" + json.dumps(payload, default=str, indent=2)
+        ),
+        max_tokens=1200,
+        temperature=0.4,
+    )
+
+
+def stream_actions(final_actions: list[ProposedAction]) -> list[dict[str, Any]]:
+    """Shape actions for the simulator schema — same rule as respond()'s
+    trailing list comprehension. Extracted so the SSE endpoint can emit
+    it in the 'done' event without going through respond()."""
+    return [
+        shaped for a in final_actions
+        if (shaped := _to_simulator_action(a)) is not None
+    ]

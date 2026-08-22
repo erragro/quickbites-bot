@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom"
 import { motion } from "motion/react"
-import { ArrowRight, Lock, Puzzle, ShieldCheck } from "lucide-react"
+import { ArrowRight, FileText, Languages, ShieldCheck } from "lucide-react"
 
 import { GradientText } from "@/components/animate-ui/primitives/texts/gradient"
 import { ShimmeringText } from "@/components/animate-ui/primitives/texts/shimmering"
@@ -10,15 +10,17 @@ import { iconFor } from "@/lib/icons"
 import { useAuthStore } from "@/stores/auth"
 
 /**
- * Landing page for signed-in users. Explains what this platform is (a
- * login/access-control shell that gates modules) and shows tiles for the
- * modules the caller has access to.
+ * Sreshtha landing for signed-in users.
  *
- * Non-technical framing: this is deliberately spare. The page is the
- * "why" of the whole platform — access control to modules for people who
- * should have them — and each accessible module gets a click-target
- * card. Modules the caller can't access are hidden entirely (the sidebar
- * already tells them what's available; the home dash doesn't lecture).
+ * The frame: India has 7.7 crore gig workers, no product speaks their
+ * language, and nobody translates the letter of the law into "here's
+ * what to do this afternoon." Sreshtha is five modules that do exactly
+ * that, on one shell.
+ *
+ * Hero carries a bilingual wordmark (English + Devanagari), a tagline
+ * that names the audience, and three pillar cards. Module cards below
+ * show whatever the caller has access to; inaccessible modules are
+ * hidden (sidebar already lists them).
  */
 export function HomePage() {
   const user = useAuthStore((s) => s.user)
@@ -31,57 +33,66 @@ export function HomePage() {
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.28 }}
-        className="space-y-3"
+        className="space-y-4"
       >
-        <div className="text-3xl font-bold tracking-tight md:text-4xl">
-          <GradientText
-            text="Welcome to QuickBites"
-            gradient="linear-gradient(90deg, #f97316 0%, #ec4899 50%, #6366f1 100%)"
-          />
+        <div className="flex items-baseline gap-3">
+          <div className="text-3xl font-bold tracking-tight md:text-4xl">
+            <GradientText
+              text="Sreshtha"
+              gradient="linear-gradient(90deg, #4338ca 0%, #7c3aed 45%, #f59e0b 100%)"
+            />
+          </div>
+          <div className="hidden text-2xl font-medium text-muted-foreground md:block">
+            श्रेष्ठ
+          </div>
         </div>
-        <p className="max-w-2xl text-muted-foreground">
-          A shared login layer that provisions the right modules to the
-          right people. Nothing more, nothing less — the platform doesn't
-          try to be everything. Each module lives on its own; the shell
-          only cares about identity and access.
+        <p className="max-w-2xl text-base text-foreground/80 md:text-lg">
+          Rights, contracts, and support for India's gig workers.
+          In <span className="font-medium text-brand-700 dark:text-brand-300">your language</span>.
+        </p>
+        <p className="max-w-2xl text-sm text-muted-foreground">
+          Upload the contract you signed and see it explained clause by clause.
+          Ask about your rights and get answers you can cite. Find the government
+          schemes you're already entitled to. Draft a complaint that actually
+          goes somewhere.
         </p>
         {user?.is_super_admin && (
-          <div className="text-xs text-muted-foreground">
+          <div className="pt-1 text-xs text-muted-foreground">
             You're signed in as a super-admin. Use the{" "}
             <Link to="/admin" className="text-brand-600 hover:underline">
               Admin panel
             </Link>{" "}
-            to grant modules to new teammates.
+            to manage users and modules.
           </div>
         )}
       </motion.div>
 
       <div className="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <SystemCard
-          icon={<Lock className="size-5 text-brand-600" />}
-          title="Identity"
-          body="Email + password sign-in. JWT-scoped API access. Rate-limited login."
+        <PillarCard
+          icon={<Languages className="size-5 text-brand-600" />}
+          title="Language-first"
+          body="Hindi, Bengali, Tamil are first-class. English is a fallback, not the norm. Voice input on every field."
         />
-        <SystemCard
+        <PillarCard
           icon={<ShieldCheck className="size-5 text-brand-600" />}
-          title="Access control"
-          body="Per-user, per-module. Three access levels. Super-admin bootstraps on first signup."
+          title="Rights, not advice"
+          body="Every claim cites the statute or scheme. Deterministic decisions in code. AI handles language, never legal outcomes."
         />
-        <SystemCard
-          icon={<Puzzle className="size-5 text-brand-600" />}
-          title="Module registry"
-          body="Register new features from the admin panel; they show up in every sidebar automatically."
+        <PillarCard
+          icon={<FileText className="size-5 text-brand-600" />}
+          title="From reading to action"
+          body="Read the contract, understand the clause, find the scheme, draft the complaint. One flow, one session."
         />
       </div>
 
       <div className="mt-12">
         <div className="mb-3 flex items-baseline justify-between">
           <h2 className="text-lg font-semibold tracking-tight">
-            <ShimmeringText text="Your modules" />
+            <ShimmeringText text="Your tools" />
           </h2>
           {accessible.length === 0 && (
             <span className="text-xs text-muted-foreground">
-              You don't have access to any modules yet. Ask your admin.
+              No tools enabled yet. Ask your admin to grant access.
             </span>
           )}
         </div>
@@ -120,11 +131,16 @@ export function HomePage() {
           })}
         </div>
       </div>
+
+      <div className="mt-16 border-t pt-6 text-xs text-muted-foreground">
+        Sreshtha is information, not legal advice. For formal help, call
+        India Labourline at <span className="font-medium">1800-419-1550</span>.
+      </div>
     </div>
   )
 }
 
-function SystemCard({
+function PillarCard({
   icon,
   title,
   body,

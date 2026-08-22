@@ -1,4 +1,6 @@
 import {
+  AlertTriangle,
+  Award,
   BadgePercent,
   BarChart3,
   Boxes,
@@ -6,16 +8,25 @@ import {
   Cog,
   CreditCard,
   FileCog,
+  FileText,
+  FileWarning,
   HandCoins,
+  HeartPulse,
   HelpCircle,
   Home,
+  IdCard,
+  IndianRupee,
+  Landmark,
+  Languages,
   LayoutDashboard,
   MessageSquare,
   MessageSquareMore,
   PackageMinus,
   PackageSearch,
   PackageX,
+  Shield,
   ShieldCheck,
+  ShieldPlus,
   Snowflake,
   Truck,
   UserRound,
@@ -41,7 +52,20 @@ export const ICON_REGISTRY: Record<string, LucideIcon> = {
   Boxes,
   Cog,
   FileCog,
-  // business units + issue types (Conversation Studio seeds)
+  // Sreshtha modules
+  FileText,       // Contract Reader
+  Shield,
+  Award,          // Schemes Finder
+  FileWarning,    // Complaint Helper
+  Languages,      // future language picker
+  // Rights Guide fact-card icons
+  IndianRupee,    // minimum wage / earnings
+  HeartPulse,     // injury / health
+  AlertTriangle,  // escalation / grievance
+  IdCard,         // e-Shram
+  ShieldPlus,     // insurance schemes
+  Landmark,       // state welfare boards
+  // business units + issue types (Conversation Studio seeds — legacy)
   UtensilsCrossed,
   Truck,
   CreditCard,

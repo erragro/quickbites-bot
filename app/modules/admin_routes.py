@@ -188,7 +188,13 @@ def grant_module_access(
         access_level=body.access_level,
         granted_by=admin.id,
     )
-    return _serialize_user(_load_user(db, user_id))
+    # Same identity-map cache trap as the bindings PUT: the User loaded
+    # for the ownership check has its module_accesses collection cached
+    # from before we appended the new row. Expire so the re-serialise
+    # actually sees the fresh state.
+    user = _load_user(db, user_id)
+    db.expire(user, ["module_accesses"])
+    return _serialize_user(user)
 
 
 @router.delete(
@@ -208,7 +214,11 @@ def revoke_module_access(
             status.HTTP_404_NOT_FOUND,
             detail="no such access grant",
         )
-    return _serialize_user(_load_user(db, user_id))
+    # Expire the stale collection cache before re-serialise (see grant
+    # path for the full explanation).
+    user = _load_user(db, user_id)
+    db.expire(user, ["module_accesses"])
+    return _serialize_user(user)
 
 
 # --- Modules ----------------------------------------------------------------

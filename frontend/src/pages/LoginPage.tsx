@@ -44,11 +44,16 @@ export function LoginPage() {
       >
         <Card className="border-brand-200/40 shadow-xl backdrop-blur-sm">
           <CardHeader className="space-y-2 pb-4">
-            <div className="text-2xl font-bold tracking-tight">
-              <TypingText text="Welcome back" duration={40} />
+            <div className="flex items-baseline gap-2">
+              <div className="text-2xl font-bold tracking-tight">
+                <TypingText text="Welcome back" duration={40} />
+              </div>
+              <span className="text-lg font-medium text-muted-foreground">
+                श्रेष्ठ
+              </span>
             </div>
             <p className="text-sm text-muted-foreground">
-              Sign in to continue to QuickBites Support.
+              Sign in to Sreshtha. Rights, contracts, and support in your language.
             </p>
           </CardHeader>
           <CardContent>

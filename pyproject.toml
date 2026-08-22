@@ -19,6 +19,21 @@ dependencies = [
     "bcrypt>=4.2",
     "python-jose[cryptography]>=3.3",
     "slowapi>=0.1.9",
+    # Contract Reader multipart/form-data file uploads (FastAPI dep).
+    "python-multipart>=0.0.20",
+    # Contract Reader OCR — in-house Indic OCR (EasyOCR + PyMuPDF for PDF
+    # page rendering) instead of Gemini vision. Worker document text stays
+    # on our infrastructure, no per-call cost, story for "built for India".
+    # PyMuPDF is pure-Python (wheel), EasyOCR pulls in torch (~500MB
+    # CPU wheel). Language models download on first Reader init (~100MB
+    # per language pair).
+    "easyocr>=1.7",
+    "PyMuPDF>=1.24",
+    "Pillow>=10.0",
+    # Idiom library — Aho-Corasick multi-pattern matcher for scanning
+    # English source text for known idioms in a single linear pass.
+    # C-extension, handles hundreds of patterns at millions of chars/s.
+    "pyahocorasick>=2.0",
 ]
 
 [project.optional-dependencies]

@@ -23,6 +23,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -85,6 +86,12 @@ class User(Base):
         foreign_keys="UserModuleAccess.user_id",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    uploaded_contracts: Mapped[list["UploadedContract"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="UploadedContract.created_at.desc()",
     )
 
 
@@ -472,4 +479,389 @@ class IntentDetectionCase(Base):
 
     __table_args__ = (
         Index("ix_intent_cases_lookup", "matched_issue_type_id", "matched_by"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sreshtha content model — Rights Guide, Schemes, Complaints, Contracts.
+#
+# fact_cards + complaint_templates: one row per (topic_key, language). The
+# card/template is fully language-scoped because the *content itself* is
+# what changes across languages, not just the display labels.
+#
+# schemes + scheme_translations: split. Eligibility rules stay canonical
+# in `schemes` (matching by state + occupation joins one table); localised
+# copy lives in `scheme_translations` (one row per language).
+#
+# uploaded_contracts: per-user file uploads with a status-machine that
+# advances from 'uploaded' → 'ocr_done' → 'ready' as the three-stage
+# processor works through it. The `stages` JSONB holds the accumulating
+# output; shape is documented in the migration comments.
+#
+# Every content row has a nullable `tenant_id` for future multi-tenancy.
+# NULL means shared (v1 default). See docs/PRD.md § 7.
+# ---------------------------------------------------------------------------
+
+
+class FactCard(Base):
+    """One row per (topic_key, language). All variants of the same fact
+    (Hindi, Bengali, Tamil, English) share the topic_key. UI resolves
+    which row to show by (topic_key, user_language) lookup."""
+
+    __tablename__ = "fact_cards"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    topic_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    language: Mapped[str] = mapped_column(String(10), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    citation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    action_steps: Mapped[Optional[list | dict]] = mapped_column(JSONB, nullable=True)
+    icon: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    # Pre-generated TTS URL from Sarvam. Null → render on-demand.
+    audio_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "topic_key", "language", "tenant_id",
+            name="uq_fact_cards_topic_lang_tenant",
+        ),
+        CheckConstraint(
+            "language IN ('en','hi','bn','ta','te','kn','mr')",
+            name="ck_fact_cards_language",
+        ),
+        Index("ix_fact_cards_lang_active", "language", "is_active"),
+        Index("ix_fact_cards_topic", "topic_key"),
+        Index("ix_fact_cards_tenant", "tenant_id"),
+    )
+
+
+class Scheme(Base):
+    """Government scheme metadata. Language-agnostic. Translations live
+    in scheme_translations."""
+
+    __tablename__ = "schemes"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    key: Mapped[str] = mapped_column(String(80), nullable=False)
+    # 'central', 'all', or a state code like 'karnataka'
+    state_scope: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    # Structured eligibility rules — see migration 005 comment for shape.
+    # Schemes Finder walks this dict against the user's profile.
+    eligibility_rules: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict,
+    )
+    apply_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # Array of {name, note?}
+    docs_needed: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    estimated_time: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    icon: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    translations: Mapped[list["SchemeTranslation"]] = relationship(
+        back_populates="scheme",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("key", "tenant_id", name="uq_schemes_key_tenant"),
+        Index("ix_schemes_state_active", "state_scope", "is_active"),
+        Index("ix_schemes_tenant", "tenant_id"),
+    )
+
+
+class SchemeTranslation(Base):
+    __tablename__ = "scheme_translations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    scheme_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("schemes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    language: Mapped[str] = mapped_column(String(10), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    apply_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    scheme: Mapped["Scheme"] = relationship(back_populates="translations")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "scheme_id", "language", name="uq_scheme_translations_scheme_lang",
+        ),
+        CheckConstraint(
+            "language IN ('en','hi','bn','ta','te','kn','mr')",
+            name="ck_scheme_translations_language",
+        ),
+        Index("ix_scheme_translations_lang", "language"),
+    )
+
+
+class ComplaintTemplate(Base):
+    """One row per (topic_key, language). Body carries {{variable}}
+    placeholders filled from the required_fields form at render time
+    (existing Handlebars-style renderer)."""
+
+    __tablename__ = "complaint_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    topic_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    language: Mapped[str] = mapped_column(String(10), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    # Escalation ladder — see migration 005 for shape.
+    routing: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # Form fields the worker fills — see migration 005 for shape.
+    required_fields: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "topic_key", "language", "tenant_id",
+            name="uq_complaint_templates_topic_lang_tenant",
+        ),
+        CheckConstraint(
+            "language IN ('en','hi','bn','ta','te','kn','mr')",
+            name="ck_complaint_templates_language",
+        ),
+        Index("ix_complaint_templates_lang_active", "language", "is_active"),
+        Index("ix_complaint_templates_topic", "topic_key"),
+    )
+
+
+class UploadedContract(Base):
+    """Per-user contract file with its three-stage processing state.
+
+    Status machine (enforced by CHECK constraint in migration):
+      uploaded → ocr_pending → ocr_done → processing → ready
+                                                    ↓
+                                                  failed
+    The `stages` JSONB accumulates output from each stage; consumers can
+    render whatever's ready (e.g. show OCR text while stages 2-3 run)."""
+
+    __tablename__ = "uploaded_contracts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="uploaded")
+    ocr_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # {stage_1: {...}, stage_2: {...}, stage_3: {...}} — shape doc in migration
+    stages: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # Detected language of the contract source (from OCR). Not user-facing
+    # by itself; used to hint Stage 1 clause extraction.
+    language: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    # Worker's chosen OUTPUT language. Set at upload time. Stage 3 renders
+    # explanations/implications/actions in this language regardless of the
+    # contract's source language (many workers can't read English contracts
+    # but need the analysis in Hindi/Bengali/Tamil).
+    target_language: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="en",
+    )
+    # 'native' or 'roman'. When 'roman' and target_language != 'en', the
+    # Day-13 transliteration pass converts the native-script Stage 3
+    # output to Latin letters (aap ek swatantra thekedaar hain vs
+    # आप एक स्वतंत्र ठेकेदार हैं).
+    target_script: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="native",
+    )
+    # Sarvam Mayura's tone/register mode — worker's choice for how
+    # "English-y" the translation should feel. Values:
+    #   formal              polite standard tone (default)
+    #   modern-colloquial   casual, some English loanwords retained
+    #   classic-colloquial  traditional spoken style
+    #   code-mixed          heavy Hinglish/Benglish
+    # Passed through to Mayura's `mode` parameter on every call.
+    translation_mode: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="formal",
+    )
+    contract_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    user: Mapped["User"] = relationship(back_populates="uploaded_contracts")
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('uploaded','ocr_pending','ocr_done','processing','ready','failed')",
+            name="ck_uploaded_contracts_status",
+        ),
+        Index(
+            "ix_uploaded_contracts_user_created", "user_id", "created_at",
+        ),
+        Index("ix_uploaded_contracts_status", "status"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Idiom library — deterministic phrase-level translations
+#
+# Runtime scans English source text (Stage 3 output, chatbot responses,
+# fact cards) for known idioms via Aho-Corasick (see app/translate/idioms.py)
+# and swaps them for pre-verified target-language equivalents before + after
+# the general-purpose Mayura translation. Editing lives in the admin panel;
+# every write invalidates the runtime automaton cache.
+# ---------------------------------------------------------------------------
+
+
+class Idiom(Base):
+    """English source phrase + its meaning gloss. Translations live in
+    IdiomTranslation, one row per language."""
+
+    __tablename__ = "idiom_library"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    source_phrase: Mapped[str] = mapped_column(String(200), nullable=False)
+    meaning: Mapped[str] = mapped_column(Text, nullable=False)
+    # 'legal' | 'work' | 'money' | 'general' | 'safety' — enforced by the
+    # DB check constraint in migration 007. Kept as a plain string here
+    # so admins can extend categories later without a schema change (we'd
+    # just relax the check).
+    category: Mapped[str] = mapped_column(String(20), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    translations: Mapped[list["IdiomTranslation"]] = relationship(
+        back_populates="idiom",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="IdiomTranslation.language",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_phrase", "tenant_id",
+            name="uq_idiom_library_phrase_tenant",
+        ),
+        CheckConstraint(
+            "category IN ('legal','work','money','general','safety')",
+            name="ck_idiom_library_category",
+        ),
+    )
+
+
+class IdiomTranslation(Base):
+    __tablename__ = "idiom_translations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+    )
+    idiom_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("idiom_library.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    language: Mapped[str] = mapped_column(String(10), nullable=False)
+    translation: Mapped[str] = mapped_column(Text, nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    idiom: Mapped["Idiom"] = relationship(back_populates="translations")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "idiom_id", "language",
+            name="uq_idiom_translations_idiom_lang",
+        ),
+        CheckConstraint(
+            "language IN ('en','hi','bn','ta','te','kn','mr')",
+            name="ck_idiom_translations_language",
+        ),
     )

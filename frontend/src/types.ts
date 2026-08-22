@@ -176,3 +176,87 @@ export interface ApiError {
   detail: string | { msg: string; loc?: string[] }[]
   status?: number
 }
+
+// ------- Contract Reader (uploads) -------
+
+export type ContractStatus =
+  | "uploaded"
+  | "ocr_pending"
+  | "ocr_done"
+  | "processing"
+  | "ready"
+  | "failed"
+
+export type TargetLanguage = "en" | "hi" | "bn" | "ta" | "te" | "kn" | "mr"
+export type TargetScript = "native" | "roman"
+// Sarvam Mayura v1 tone/register modes. Default 'formal'.
+export type TranslationMode =
+  | "formal"
+  | "modern-colloquial"
+  | "classic-colloquial"
+  | "code-mixed"
+
+export interface ContractSummary {
+  id: string
+  filename: string
+  mime_type: string
+  size_bytes: number
+  status: ContractStatus
+  language: string | null              // source language (OCR hint / detected)
+  target_language: TargetLanguage      // worker's chosen output language
+  target_script: TargetScript          // 'native' or 'roman'
+  translation_mode: TranslationMode    // Mayura register/tone
+  contract_type: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ContractDetail extends ContractSummary {
+  ocr_text: string | null
+  stages: Record<string, unknown> | null
+  error_message: string | null
+}
+
+// ------- Idiom library admin -------
+
+export type IdiomCategory = "legal" | "work" | "money" | "general" | "safety"
+
+export interface IdiomTranslation {
+  id: string
+  language: TargetLanguage
+  translation: string
+  notes: string | null
+  is_active: boolean
+  updated_at: string
+}
+
+export interface Idiom {
+  id: string
+  source_phrase: string
+  meaning: string
+  category: IdiomCategory
+  is_active: boolean
+  created_at: string
+  updated_at: string
+  translations: IdiomTranslation[]
+}
+
+export interface IdiomCreateInput {
+  source_phrase: string
+  meaning: string
+  category: IdiomCategory
+  is_active?: boolean
+  translations?: {
+    language: TargetLanguage
+    translation: string
+    notes?: string | null
+    is_active?: boolean
+  }[]
+}
+
+export interface IdiomUpdateInput {
+  source_phrase?: string
+  meaning?: string
+  category?: IdiomCategory
+  is_active?: boolean
+}

@@ -61,11 +61,16 @@ export function SignupPage() {
       >
         <Card className="border-brand-200/40 shadow-xl backdrop-blur-sm">
           <CardHeader className="space-y-2 pb-4">
-            <div className="text-2xl font-bold tracking-tight">
-              <TypingText text="Create your account" duration={40} />
+            <div className="flex items-baseline gap-2">
+              <div className="text-2xl font-bold tracking-tight">
+                <TypingText text="Join Sreshtha" duration={40} />
+              </div>
+              <span className="text-lg font-medium text-muted-foreground">
+                श्रेष्ठ
+              </span>
             </div>
             <p className="text-sm text-muted-foreground">
-              Get started with QuickBites Support in a few seconds.
+              Create your account. Takes a few seconds, no phone number needed for now.
             </p>
           </CardHeader>
           <CardContent>

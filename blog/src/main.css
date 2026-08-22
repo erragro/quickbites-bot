@@ -1,0 +1,50 @@
+/* Tailwind v4 + Sreshtha brand tokens. Kept identical to
+   quickbites-bot/frontend/src/index.css so the blog reads as part
+   of the Sreshtha product family. */
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+
+@theme {
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+
+  /* Sreshtha brand, deep indigo (hue ~275). */
+  --color-brand-50:  oklch(0.970 0.020 275);
+  --color-brand-100: oklch(0.935 0.045 275);
+  --color-brand-200: oklch(0.880 0.085 275);
+  --color-brand-300: oklch(0.800 0.130 275);
+  --color-brand-400: oklch(0.700 0.175 275);
+  --color-brand-500: oklch(0.605 0.210 275);
+  --color-brand-600: oklch(0.520 0.220 275);
+  --color-brand-700: oklch(0.445 0.205 275);
+  --color-brand-800: oklch(0.375 0.175 275);
+  --color-brand-900: oklch(0.310 0.140 275);
+
+  /* Accent, marigold (hue ~65). Used sparingly. */
+  --color-marigold-50:  oklch(0.980 0.030 80);
+  --color-marigold-100: oklch(0.960 0.060 80);
+  --color-marigold-200: oklch(0.930 0.110 80);
+  --color-marigold-500: oklch(0.790 0.190 75);
+  --color-marigold-600: oklch(0.720 0.185 68);
+  --color-marigold-900: oklch(0.445 0.115 50);
+}
+
+/* Body baseline. Matches the Sreshtha app: subtle warm off-white in
+   light mode, near-black in dark mode. */
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01";
+  color: rgb(23 23 23);
+  background: rgb(250 250 250);
+  -webkit-font-smoothing: antialiased;
+}
+@media (prefers-color-scheme: dark) {
+  body {
+    color: rgb(240 240 240);
+    background: rgb(15 15 15);
+  }
+}

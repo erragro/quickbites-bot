@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
 import { motion } from "motion/react"
-import { CheckCircle2, PlusCircle, ShieldCheck, XCircle } from "lucide-react"
+import { PlusCircle, ShieldCheck } from "lucide-react"
 import { toast } from "sonner"
 
 import { LoaderCircleIcon } from "@/components/animate-ui/icons/loader-circle"
@@ -14,14 +14,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import {
   useAdminModules,
@@ -74,7 +69,7 @@ export function AdminPage() {
             Admin panel
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Grant and revoke module access, promote super-admins, and register new modules.
+            Toggle module access per user, promote super-admins, and register new modules.
           </p>
         </div>
         <Button onClick={() => setRegisterOpen(true)} className="gap-1.5">
@@ -94,8 +89,14 @@ export function AdminPage() {
                 <th className="px-4 py-2 font-medium">User</th>
                 <th className="px-4 py-2 font-medium">Active</th>
                 <th className="px-4 py-2 font-medium">Super-admin</th>
-                <th className="px-4 py-2 font-medium">Modules</th>
-                <th className="w-24 px-4 py-2 font-medium">Grant</th>
+                {modules.data?.map((m) => (
+                  <th key={m.id} className="px-4 py-2 font-medium">
+                    <div className="flex items-center gap-1.5">
+                      <Icon module={m} />
+                      {m.name}
+                    </div>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -104,7 +105,7 @@ export function AdminPage() {
                   key={u.id}
                   user={u}
                   isSelf={u.id === currentUser?.id}
-                  allModules={modules.data ?? []}
+                  modules={modules.data ?? []}
                   modulesById={modulesById}
                 />
               ))}
@@ -118,23 +119,39 @@ export function AdminPage() {
   )
 }
 
+function Icon({ module }: { module: ModuleInfo }) {
+  const I = iconFor(module.icon)
+  return <I className="size-3" />
+}
+
+/**
+ * One row per user. Columns for active + super-admin toggles, then one
+ * column per registered module with a Switch. Toggling the switch on
+ * grants view access by default; a small dropdown appears next to the
+ * switch to bump the level to edit or admin. Toggling off revokes.
+ *
+ * No dialogs, no chip-with-× pattern — everything is a direct toggle,
+ * which the earlier "click a dropdown, pick a level, confirm a dialog"
+ * flow was hiding behind three interactions.
+ */
 function UserRow({
   user,
   isSelf,
-  allModules,
-  modulesById,
+  modules,
+  modulesById: _modulesById,
 }: {
   user: AdminUser
   isSelf: boolean
-  allModules: ModuleInfo[]
+  modules: ModuleInfo[]
   modulesById: Map<string, ModuleInfo>
 }) {
   const update = useUpdateUser()
-  const revoke = useRevokeAccess()
 
-  const grantableModules = allModules.filter(
-    (m) => !user.module_accesses.find((a) => a.module_id === m.id),
-  )
+  const accessByModule = useMemo(() => {
+    const m = new Map<string, AccessLevel>()
+    user.module_accesses.forEach((a) => m.set(a.module_id, a.access_level))
+    return m
+  }, [user.module_accesses])
 
   const setActive = (next: boolean) =>
     update
@@ -152,146 +169,115 @@ function UserRow({
         <div className="font-medium">{user.email}</div>
         <div className="text-xs text-muted-foreground">
           joined {new Date(user.created_at).toLocaleDateString()}
+          {isSelf && <span className="ml-1.5 text-brand-600">· you</span>}
         </div>
       </td>
       <td className="px-4 py-3">
-        <button
-          type="button"
-          onClick={() => setActive(!user.is_active)}
+        <Switch
+          checked={user.is_active}
+          onCheckedChange={setActive}
           disabled={isSelf && user.is_active}
-          className={cn(
-            "inline-flex items-center gap-1 text-xs font-medium",
-            user.is_active ? "text-emerald-600" : "text-muted-foreground",
-            isSelf && user.is_active && "cursor-not-allowed opacity-70",
-          )}
-          title={isSelf && user.is_active ? "Cannot deactivate yourself" : undefined}
-        >
-          {user.is_active ? <CheckCircle2 className="size-4" /> : <XCircle className="size-4" />}
-          {user.is_active ? "Active" : "Disabled"}
-        </button>
+          aria-label={`Toggle active for ${user.email}`}
+        />
       </td>
       <td className="px-4 py-3">
-        <button
-          type="button"
-          onClick={() => setSuperAdmin(!user.is_super_admin)}
-          className={cn(
-            "inline-flex items-center gap-1 text-xs font-medium",
-            user.is_super_admin ? "text-brand-600" : "text-muted-foreground",
-          )}
-        >
-          <ShieldCheck className="size-4" />
-          {user.is_super_admin ? "Yes" : "No"}
-        </button>
+        <Switch
+          checked={user.is_super_admin}
+          onCheckedChange={setSuperAdmin}
+          aria-label={`Toggle super-admin for ${user.email}`}
+        />
       </td>
-      <td className="px-4 py-3">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {user.module_accesses.length === 0 && (
-            <span className="text-xs text-muted-foreground">No modules granted</span>
-          )}
-          {user.module_accesses.map((a) => {
-            const module = modulesById.get(a.module_id)
-            const Icon = iconFor(module?.icon)
-            return (
-              <span
-                key={a.module_id}
-                className="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px]"
-              >
-                <Icon className="size-3" />
-                <span>{a.module_name}</span>
-                <span className="text-muted-foreground">·</span>
-                <span className="uppercase tracking-widest">{a.access_level}</span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    revoke
-                      .mutateAsync({ userId: user.id, moduleId: a.module_id })
-                      .catch((err) => toast.error(humaniseError(err)))
-                  }
-                  className="ml-1 text-muted-foreground hover:text-destructive"
-                  aria-label={`Revoke ${a.module_name}`}
-                >
-                  ×
-                </button>
-              </span>
-            )
-          })}
-        </div>
-      </td>
-      <td className="px-4 py-3">
-        {grantableModules.length === 0 ? (
-          <span className="text-[11px] text-muted-foreground">All granted</span>
-        ) : (
-          <GrantMenu user={user} grantableModules={grantableModules} />
-        )}
-      </td>
+      {modules.map((m) => (
+        <td key={m.id} className="px-4 py-3">
+          <ModuleAccessCell
+            user={user}
+            module={m}
+            currentLevel={accessByModule.get(m.id) ?? null}
+          />
+        </td>
+      ))}
     </tr>
   )
 }
 
-function GrantMenu({
+/**
+ * A Switch + level dropdown combined. Off → revoked. On → granted at
+ * the level shown to the right (view/edit/admin). Flipping level
+ * without turning off just changes the tier.
+ */
+function ModuleAccessCell({
   user,
-  grantableModules,
+  module,
+  currentLevel,
 }: {
   user: AdminUser
-  grantableModules: ModuleInfo[]
+  module: ModuleInfo
+  currentLevel: AccessLevel | null
 }) {
   const grant = useGrantAccess()
-  const [selectedModule, setSelectedModule] = useState<ModuleInfo | null>(null)
+  const revoke = useRevokeAccess()
+
+  const enabled = currentLevel !== null
+  const busy = grant.isPending || revoke.isPending
+
+  const onToggle = async (next: boolean) => {
+    try {
+      if (next) {
+        // Default new grants to view — most permissive level requires
+        // a deliberate second interaction, not just "flip switch".
+        await grant.mutateAsync({
+          userId: user.id,
+          moduleId: module.id,
+          accessLevel: "view",
+        })
+      } else {
+        await revoke.mutateAsync({ userId: user.id, moduleId: module.id })
+      }
+    } catch (err) {
+      toast.error(humaniseError(err))
+    }
+  }
+
+  const onChangeLevel = async (level: AccessLevel) => {
+    if (level === currentLevel) return
+    try {
+      await grant.mutateAsync({
+        userId: user.id,
+        moduleId: module.id,
+        accessLevel: level,
+      })
+    } catch (err) {
+      toast.error(humaniseError(err))
+    }
+  }
 
   return (
-    <>
-      <DropdownMenu>
-        <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium hover:bg-muted focus-visible:ring-2 focus-visible:ring-brand-400 outline-none">
-          <PlusCircle className="size-3" />
-          Grant
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-48">
-          {grantableModules.map((m) => (
-            <DropdownMenuItem
-              key={m.id}
-              onSelect={() => queueMicrotask(() => setSelectedModule(m))}
-            >
-              {m.name}
-            </DropdownMenuItem>
+    <div className="flex items-center gap-2">
+      <Switch
+        checked={enabled}
+        onCheckedChange={onToggle}
+        disabled={busy}
+        aria-label={`Toggle ${module.name} access for ${user.email}`}
+      />
+      {enabled && (
+        <select
+          value={currentLevel ?? "view"}
+          onChange={(e) => onChangeLevel(e.target.value as AccessLevel)}
+          disabled={busy}
+          className={cn(
+            "h-7 rounded-md border bg-background px-1.5 text-xs",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400",
+          )}
+          aria-label={`Access level for ${module.name}`}
+        >
+          {ACCESS_LEVELS.map((lvl) => (
+            <option key={lvl} value={lvl}>
+              {lvl}
+            </option>
           ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      <Dialog open={!!selectedModule} onOpenChange={(open) => !open && setSelectedModule(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Grant {selectedModule?.name}</DialogTitle>
-            <DialogDescription>
-              Select the access level for {user.email}.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid grid-cols-3 gap-2">
-            {ACCESS_LEVELS.map((lvl) => (
-              <Button
-                key={lvl}
-                variant="secondary"
-                disabled={grant.isPending}
-                onClick={async () => {
-                  if (!selectedModule) return
-                  try {
-                    await grant.mutateAsync({
-                      userId: user.id,
-                      moduleId: selectedModule.id,
-                      accessLevel: lvl,
-                    })
-                    setSelectedModule(null)
-                  } catch (err) {
-                    toast.error(humaniseError(err))
-                  }
-                }}
-              >
-                {lvl}
-              </Button>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
-    </>
+        </select>
+      )}
+    </div>
   )
 }
 

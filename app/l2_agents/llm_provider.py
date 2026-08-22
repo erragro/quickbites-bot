@@ -10,11 +10,12 @@ Model roles:
 
 from __future__ import annotations
 
+import json
 import logging
 import random
 import time
 from functools import lru_cache
-from typing import Protocol
+from typing import Iterator, Protocol
 
 import httpx
 
@@ -34,6 +35,21 @@ class LLMProvider(Protocol):
         max_tokens: int = 1024,
         temperature: float = 0.2,
     ) -> str: ...
+
+    def chat_stream(
+        self,
+        *,
+        role: str,
+        system: str,
+        user: str,
+        max_tokens: int = 1024,
+        temperature: float = 0.2,
+    ) -> Iterator[str]:
+        """Yield response text chunks as they arrive. Not every stage needs
+        this — the callers that do (Stage 3 responder) use it to stream
+        tokens to the client via SSE. Stage 0 / Stage 1 stay on chat()
+        because they parse structured JSON and can't emit partials."""
+        ...
 
 
 class VertexAIProvider:
@@ -136,6 +152,39 @@ class VertexAIProvider:
             raise last_exc
         raise RuntimeError("vertex ai: retries exhausted")
 
+    def chat_stream(
+        self,
+        *,
+        role: str,
+        system: str,
+        user: str,
+        max_tokens: int = 1024,
+        temperature: float = 0.2,
+    ) -> Iterator[str]:
+        """Streams text chunks via the google-genai SDK's server-sent
+        streaming endpoint. Skips retry — the client is holding a
+        real-time SSE connection open and a mid-stream retry would
+        replay tokens the user already saw. On failure we let the
+        exception bubble; the pipeline degrades to escalate."""
+        from google.genai import types  # noqa: WPS433
+
+        model = self._resolve(role)
+        thinking_off = types.ThinkingConfig(thinking_budget=0)
+        config = types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=max_tokens,
+            temperature=temperature,
+            thinking_config=thinking_off,
+        )
+
+        stream = self._client.models.generate_content_stream(
+            model=model, contents=user, config=config,
+        )
+        for chunk in stream:
+            text = getattr(chunk, "text", None)
+            if text:
+                yield text
+
 
 class SarvamProvider:
     """
@@ -170,6 +219,17 @@ class SarvamProvider:
                     )
                     time.sleep(delay)
                     continue
+                if resp.status_code == 400:
+                    # Log the body so we can see the actual rejection
+                    # reason (model deprecated, max_tokens too high,
+                    # message too long, etc). The HTTPStatusError below
+                    # doesn't include the response body by default.
+                    logger.error(
+                        "sarvam 400: model=%s max_tokens=%s response=%s",
+                        body.get("model"),
+                        body.get("max_tokens"),
+                        resp.text[:800],
+                    )
                 resp.raise_for_status()
                 return resp.json()
             except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.RemoteProtocolError) as exc:
@@ -200,7 +260,11 @@ class SarvamProvider:
                 {"role": "user", "content": user},
             ],
             "temperature": temperature,
-            "max_tokens": max_tokens,
+            # Clamp to the subscription-tier cap. Starter tier is 4096;
+            # requests above that fail with a 400 "exceeds subscription
+            # tier limit". Callers can safely pass their preferred budget
+            # (e.g. 8192 for Stage 1/3) without knowing the tier.
+            "max_tokens": min(max_tokens, settings.sarvam_max_tokens_cap),
         }
         headers = {
             "Authorization": f"Bearer {self._api_key}",
@@ -211,28 +275,96 @@ class SarvamProvider:
         if isinstance(choices, list) and choices:
             msg = choices[0].get("message") or {}
             content = msg.get("content")
-            if isinstance(content, str):
+            if isinstance(content, str) and content.strip():
                 return content
+            # Reasoning models (sarvam-105b, not -conversations) may
+            # return content=null when max_tokens ran out on internal
+            # reasoning_content. Fall back to that so downstream parsers
+            # at least get something to work with, even if malformed.
+            reasoning = msg.get("reasoning_content")
+            if isinstance(reasoning, str) and reasoning.strip():
+                logger.warning(
+                    "Sarvam returned reasoning_content only (content was empty). "
+                    "Switch to sarvam-105b-conversations for cleaner output."
+                )
+                return reasoning
         logger.warning("Sarvam returned unexpected shape: %r", str(data)[:300])
         return ""
+
+    def chat_stream(
+        self,
+        *,
+        role: str,
+        system: str,
+        user: str,
+        max_tokens: int = 1024,
+        temperature: float = 0.2,
+    ) -> Iterator[str]:
+        """Sarvam ships an OpenAI-compatible streaming SSE endpoint. We
+        POST with stream=true, iterate over `data: {...}` frames, and
+        yield the delta content of each. Same no-retry policy as the
+        Vertex stream — the client is holding a real-time connection."""
+        body = {
+            "model": self._resolve(role),
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        }
+        url = "https://api.sarvam.ai/v1/chat/completions"
+        with self._client.stream("POST", url, json=body, headers=headers) as resp:
+            resp.raise_for_status()
+            for raw in resp.iter_lines():
+                if not raw or not raw.startswith("data: "):
+                    continue
+                payload = raw[len("data: "):]
+                if payload.strip() == "[DONE]":
+                    break
+                try:
+                    frame = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                choices = frame.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                text = delta.get("content")
+                if text:
+                    yield text
 
 
 @lru_cache(maxsize=4)
 def get_provider(language: str = "en") -> LLMProvider:
-    from app.l2_agents.language_detector import GEMINI_LANGUAGES
+    """Return the LLM provider for the given language.
 
-    if language in GEMINI_LANGUAGES:
-        # AI Studio path wins when a bare key is present. Otherwise we
-        # fall through to Vertex AI + ADC.
-        return VertexAIProvider(
-            api_key=settings.gemini_api_key,
-            project=settings.google_cloud_project,
-            location=settings.google_cloud_location,
-            fast_model=settings.gemini_fast_model,
-            smart_model=settings.gemini_smart_model,
-        )
-    return SarvamProvider(
-        api_key=settings.sarvam_api_key,
-        fast_model=settings.sarvam_fast_model,
-        smart_model=settings.sarvam_smart_model,
+    Architecture (as of the Sreshtha pivot, 2026-08-15):
+      - Gemini owns ALL analysis + reasoning + generation across every
+        language. Gemini 2.5 Flash handles Hindi, Bengali, Tamil, Telugu,
+        Kannada, Marathi natively at production quality, and gives us
+        consistent tone control from one prompt.
+      - Sarvam is now dedicated to two separate purposes: Mayura v1 for
+        cross-language translation (see app/translate/sarvam_mayura.py)
+        and their transliteration endpoint for Roman ↔ Devanagari script
+        flipping (form-time toggle before uploading a contract).
+        Neither uses this chat-completions abstraction.
+
+    The `language` argument is kept in the signature for future
+    fine-grained routing (e.g. long-context per language) but currently
+    every call routes to Gemini.
+    """
+    _ = language  # reserved for future language-specific model choices
+    return VertexAIProvider(
+        api_key=settings.gemini_api_key,
+        project=settings.google_cloud_project,
+        location=settings.google_cloud_location,
+        fast_model=settings.gemini_fast_model,
+        smart_model=settings.gemini_smart_model,
     )
