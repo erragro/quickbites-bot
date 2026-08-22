@@ -15,7 +15,7 @@ License: [MIT](LICENSE), © Surajit Chaudhuri.
 
 ## What's here
 
-One monorepo, three surfaces:
+Two surfaces in this repo:
 
 - `app/`: FastAPI backend. Auth, module registry, admin panel,
   Contract Reader pipeline (upload, EasyOCR, Gemini stages 1-3, Mayura
@@ -23,8 +23,9 @@ One monorepo, three surfaces:
 - `frontend/`: React 19 + Vite + Tailwind v4 + shadcn/ui client.
   Contract Reader UI, admin panels, sidebar shell for the four
   upcoming modules.
-- `blog/`: Static Vite site that ships as the Meet the Builders
-  submission. Same brand tokens as the app.
+
+The Meet the Builders submission blog lives in a separate repo,
+`sreshtha-blog`, and deploys to GitHub Pages.
 
 ## Modules
 
