@@ -9,7 +9,8 @@ stack.
 
 Blog: (Vercel URL, update once deployed)
 
-License: [MIT](LICENSE), © Surajit Chaudhuri.
+Proprietary — [all rights reserved](LICENSE), © 2026 Surajit Chaudhuri.
+Public for Google Meet the Builders (Gen AI Academy APAC) submission review.
 
 ---
 
